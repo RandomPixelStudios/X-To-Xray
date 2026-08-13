@@ -1,6 +1,6 @@
 ![title](https://cdn.modrinth.com/data/cached_images/049be141d08297f59c5db885b9842dfdb9abf063.png)
 
-### Welcome To The Official X To Xray Discord Repo!
+### Welcome To The Official X To Xray Github Repo!
 ### Here You Can:
 
 1. Get The Sourcecode
