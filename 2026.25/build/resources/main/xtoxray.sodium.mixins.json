@@ -1,0 +1,11 @@
+{
+	"required": false,
+	"package": "com.xtoxray.client.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"client": [
+		"MixinSodiumLevelSlice"
+	],
+	"injectors": {
+		"defaultRequire": 0
+	}
+}

@@ -1,0 +1,12 @@
+{
+	"required": true,
+	"package": "com.xtoxray.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"mixins": [],
+	"injectors": {
+		"defaultRequire": 0
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}

@@ -1,0 +1,45 @@
+{
+	"schemaVersion": 1,
+	"id": "xtoxray",
+	"version": "${version}",
+	"name": "XtoXray",
+	"description": "A Minecraft mod for Xray functionality.",
+	"authors": [
+		"Cat!Studios"
+	],
+	"contact": {
+		"homepage": "https://modrinth.com/mod/x-to-xray",
+		"sources": "https://modrinth.com/mod/x-to-xray"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/xtoxray/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.xtoxray.XtoXray"
+		],
+		"client": [
+			"com.xtoxray.client.XtoXrayClient"
+		],
+		"modmenu": [
+			"com.xtoxray.client.gui.ModMenuIntegration"
+		]
+	},
+	"mixins": [
+		"xtoxray.mixins.json",
+		{
+			"config": "xtoxray.client.mixins.json",
+			"environment": "client"
+		},
+		{
+			"config": "xtoxray.sodium.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.16.0",
+		"minecraft": ">=1.21.11",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}
