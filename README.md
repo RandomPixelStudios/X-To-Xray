@@ -1,33 +1,44 @@
 ![title](https://cdn.modrinth.com/data/cached_images/049be141d08297f59c5db885b9842dfdb9abf063.png)
 
-[README.md](https://github.com/user-attachments/files/31196689/README.md)
-# XtoXray Plugin Development
+[TUTORIAL.md](https://github.com/user-attachments/files/31196722/TUTORIAL.md)
+# XtoXray Plugin Developer Tutorial
 
-## Creating a Plugin
+This tutorial shows you how to create, compile and import your own plugin for XtoXray.
 
-1. Create a new Java project
-2. Add the XtoXray API to your dependencies
-3. Implement the `Plugin` interface
-4. Create a `plugin.yml` file with your plugin metadata
-5. Build as a JAR and drop it into the XtoXray plugins folder
+## Prerequisites
 
-## Plugin Structure
+- Java 21 or higher
+- Gradle (or the included `gradlew`)
+- A text editor or IDE (IntelliJ IDEA, Eclipse, VS Code)
+
+## Step 1: Create a project
+
+Create a new folder for your plugin, e.g. `my-plugin/`. Inside, create the following structure:
 
 ```
-src/main/java/com/xtoxray/yourplugin/
-  YourPlugin.java
-  listeners/
-    YourListener.java
+my-plugin/
+  build.gradle
+  settings.gradle
+  plugin.yml
+  src/
+    main/
+      java/
+        com/
+          xtoxray/
+            myplugin/
+              MyPlugin.java
 ```
 
-## plugin.yml
+## Step 2: Create plugin.yml
+
+The `plugin.yml` describes your plugin:
 
 ```yaml
-name: YourPlugin
+name: MyPlugin
 version: 1.0.0
-description: What your plugin does
+description: My first XtoXray plugin
 author: YourName
-mainClass: com.xtoxray.yourplugin.YourPlugin
+mainClass: com.xtoxray.myplugin.MyPlugin
 ```
 
 | Field | Required? | Description |
@@ -38,56 +49,185 @@ mainClass: com.xtoxray.yourplugin.YourPlugin
 | `author` | No | Your name |
 | `mainClass` | Yes | Full class name of the main class |
 
-## Plugin Interface
+## Step 3: Create build.gradle
 
-```java
-public interface Plugin {
-    void onEnable(PluginContext context);
-    void onDisable(PluginContext context);
-    String getName();
-    String getDescription();
-    String getAuthor();
-}
-```
-
-## PluginContext
-
-Provides access to:
-- `getLogger()` - PluginLogger for your plugin
-- `getDataFolder()` - Path to store plugin data
-- `getEventBus()` - Event system for listening to game events
-
-## Events
-
-Create event classes and listeners:
-
-```java
-public class MyEvent {
-    // event data
+```gradle
+plugins {
+    id 'java'
 }
 
-public class MyListener {
-    @Subscribe
-    public void onMyEvent(MyEvent event) {
-        // handle event
+group = 'com.xtoxray'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compileOnly files('libs/xtoxray-2026.27-api.jar')
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+jar {
+    from sourceSets.main.output
+    manifest {
+        attributes(
+            'Plugin-Class': 'com.xtoxray.myplugin.MyPlugin'
+        )
     }
 }
 ```
 
-## Building
+## Step 4: Implement the plugin class
 
-```bash
-./gradlew build
+Create `src/main/java/com/xtoxray/myplugin/MyPlugin.java`:
+
+```java
+package com.xtoxray.myplugin;
+
+import com.xtoxray.api.plugin.Plugin;
+import com.xtoxray.api.plugin.PluginContext;
+import com.xtoxray.api.plugin.PluginLogger;
+
+public class MyPlugin implements Plugin {
+    private PluginLogger logger;
+
+    @Override
+    public void onEnable(PluginContext context) {
+        this.logger = context.getLogger();
+        logger.info("MyPlugin enabled!");
+        
+        // Example: Create custom folder
+        // Path dataFolder = context.getDataFolder();
+        // Files.createDirectories(dataFolder);
+    }
+
+    @Override
+    public void onDisable(PluginContext context) {
+        logger.info("MyPlugin disabled!");
+    }
+
+    @Override
+    public String getName() {
+        return "MyPlugin";
+    }
+
+    @Override
+    public String getDescription() {
+        return "My first plugin for XtoXray";
+    }
+
+    @Override
+    public String getAuthor() {
+        return "YourName";
+    }
+}
 ```
 
-The output JAR can be dropped into the XtoXray plugins folder.
+## Step 5: Compile the plugin
 
-## API Location
+```bash
+# In your plugin folder
+gradlew.bat build
+```
 
-The plugin API classes are bundled with XtoXray:
-- `com.xtoxray.api.plugin.Plugin`
-- `com.xtoxray.api.plugin.PluginContext`
-- `com.xtoxray.api.plugin.PluginLogger`
-- `com.xtoxray.api.plugin.event.EventBus`
-- `com.xtoxray.api.plugin.event.Listener`
-- `com.xtoxray.api.plugin.event.Subscribe`
+The finished JAR will be in `build/libs/MyPlugin-1.0.0.jar`.
+
+## Step 6: Install the plugin
+
+1. Launch Minecraft with XtoXray
+2. Open the XtoXray menu
+3. Go to the **Plugins** tab
+4. Manually copy your `.jar` file into the plugins folder:
+   - Location: `<minecraft_dir>/xtoxray/plugins/`
+   - This is the same folder where Minecraft is running from
+5. The plugin appears in the **Installed** list automatically
+6. Use the **Uninstall** button to remove a plugin
+
+## Important notes
+
+### What plugins CANNOT do
+
+- **No access to Minecraft internals** such as blocks, entities or rendering
+- **No modification of vanilla behavior** (no mixins)
+- **No network code** or server communication
+
+The API is intentionally limited to ensure stability and security.
+
+### Lifecycle
+
+```
+onEnable()  →  plugin runs  →  onDisable()
+```
+
+- `onEnable()` is called when the plugin is loaded
+- `onDisable()` is called when the plugin is uninstalled or Minecraft shuts down
+
+### Logging
+
+Always use the provided logger:
+
+```java
+PluginLogger logger = context.getLogger();
+logger.info("Info message");
+logger.warn("Warning");
+logger.error("Error");
+```
+
+### Storing data
+
+Each plugin has its own folder:
+
+```java
+Path dataFolder = context.getDataFolder();
+// Example: .minecraft/xtoxray/plugins/MyPlugin/
+```
+
+## Troubleshooting
+
+### "Plugin could not be loaded"
+
+- Check if `plugin.yml` exists in your JAR
+- Check if `mainClass` is correct
+- Check if the JAR throws any additional errors
+
+### "ClassNotFoundException"
+
+- Make sure the main class is listed in the manifest or `plugin.yml`
+- Check the spelling of the package name
+
+### Build failed
+
+- Make sure you are using Java 21
+- Ensure the `xtoxray-2026.27-api.jar` is correctly referenced in your `build.gradle`
+
+## Advanced topics
+
+### Events (future)
+
+The event bus API is already in place, but not yet bound to all game events. In the future, plugins will be able to react to:
+
+- Block interactions
+- Player events
+- Chat messages
+
+### Configuration
+
+Store configurations as JSON in your DataFolder:
+
+```java
+import com.google.gson.Gson;
+
+Gson gson = new Gson();
+Path config = context.getDataFolder().resolve("config.json");
+String json = gson.toJson(myConfigObject);
+Files.writeString(config, json);
+```
+
+## Support
+
+If you have questions or problems, contact the XtoXray community or create an issue in the repository.
