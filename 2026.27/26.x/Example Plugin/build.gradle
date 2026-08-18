@@ -1,0 +1,28 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.xtoxray'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compileOnly files('libs/xtoxray-2026.27-api.jar')
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+jar {
+    from sourceSets.main.output
+    manifest {
+        attributes(
+            'Plugin-Class': 'com.xtoxray.template.ExamplePlugin'
+        )
+    }
+}

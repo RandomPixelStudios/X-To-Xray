@@ -1,0 +1,5 @@
+name: ExamplePlugin
+version: 1.0.0
+description: A sample XtoXray plugin
+author: YourName
+mainClass: com.xtoxray.template.ExamplePlugin
