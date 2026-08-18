@@ -1,4 +1,0 @@
-Manifest-Version: 1.0
-XtoXray-Supported-Versions: 26.1,26.1.1,26.1.2,26.2
-XtoXray-Mod-Version: 2026.25
-
