@@ -1,0 +1,96 @@
+plugins {
+    id "net.fabricmc.fabric-loom" version "1.17-SNAPSHOT"
+    id "maven-publish"
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    mavenCentral()
+}
+
+def mcVersion  = project.findProperty("mcVersion")  ?: project.minecraft_version
+def apiVersion = project.findProperty("apiVersion") ?: project.fabric_api_version
+def loaderVer  = project.findProperty("loaderVer")  ?: project.loader_version
+
+loom {
+    if (project.hasProperty('sourceOverride')) {
+        def versionKey = project.property('sourceOverride').replace('.', '_')
+        def versionDirPath = "src/versions/v" + versionKey
+        def versionDir = file(versionDirPath)
+        if (versionDir.exists()) {
+            def overrideFiles = fileTree(dir: versionDirPath, include: "**/*.java")
+            overrideFiles.each { overrideFile ->
+                def relativePath = versionDir.toPath().relativize(overrideFile.toPath()).toString()
+                def mainFilePath = "src/main/java/" + relativePath
+                def mainFile = file(mainFilePath)
+                if (mainFile.exists()) {
+                    sourceSets.main.java.exclude { elem -> elem.file == mainFile }
+                }
+            }
+            sourceSets.main.java.srcDirs += [versionDirPath + "/java"]
+            sourceSets.main.resources.srcDirs += [versionDirPath + "/resources"]
+        }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${mcVersion}"
+    implementation "net.fabricmc:fabric-loader:${loaderVer}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${apiVersion}"
+}
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 21
+}
+
+java {
+    sourceCompatibility = JavaVersion.toVersion(project.java_version)
+    targetCompatibility = JavaVersion.toVersion(project.java_version)
+    withSourcesJar()
+}
+
+jar {
+    from("LICENSE") {
+        rename { "${it}_${project.base.archivesName.get()}" }
+    }
+}
+
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+        }
+    }
+    repositories {
+    }
+}
+task apiJar(type: Jar, dependsOn: compileJava) {
+    archiveClassifier = 'api'
+    from("$buildDir/classes/java/main") {
+        include 'com/xtoxray/api/plugin/**'
+        include 'com/xtoxray/api/plugin/event/**'
+    }
+    manifest {
+        attributes(
+            'Automatic-Module-Name': 'com.xtoxray.api'
+        )
+    }
+}
+
+build.dependsOn apiJar
+
+apply from: "verify-versions.gradle"
