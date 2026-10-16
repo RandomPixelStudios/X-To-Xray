@@ -34,9 +34,8 @@ public class XrayToggleHandler implements ClientModInitializer {
         NewsManager.init();
         HandshakeNetworking.registerClient();
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-            Component discord = Component.literal("[Discord]").withStyle(style -> style.withClickEvent(new ClickEvent.OpenUrl(URI.create("https://discord.gg/CZ9Mr7epqj"))).withColor(0x5865F2));
             Component youtube = Component.literal("[YouTube]").withStyle(style -> style.withClickEvent(new ClickEvent.OpenUrl(URI.create("https://www.youtube.com/@RandomPixelStudios"))).withColor(0xFF0000));
-            Component msg = Component.literal("Support X To Xray By Joining The Discord Server And Subscribing On Youtube! ").append(discord).append(Component.literal(" ")).append(youtube);
+            Component msg = Component.literal("Support X To Xray By Subscribing On Youtube! ").append(youtube);
             if (client.player != null) {
                 client.player.sendSystemMessage(msg);
             }

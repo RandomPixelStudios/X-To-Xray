@@ -734,7 +734,7 @@ public class XrayConfigScreen extends Screen {
             int wy = 30;
             gge.text(this.font, "Bug Report", cx, wy - 14, TEXT_WHITE);
             wy += 6;
-            gge.text(this.font, "Step 1: Join our Discord server.", cx, wy, TEXT_WHITE);
+            gge.text(this.font, "Step 1: Open an issue on github.com/RandomPixelStudios/X-To-Xray.", cx, wy, TEXT_WHITE);
             wy += 12;
             gge.text(this.font, "Step 2: Describe the error / attach your log / send a screenshot.", cx, wy, TEXT_WHITE);
             wy += 12;

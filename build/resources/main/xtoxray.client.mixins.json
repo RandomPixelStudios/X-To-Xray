@@ -1,0 +1,18 @@
+{
+	"required": true,
+	"package": "com.xtoxray.client.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"client": [
+		"MixinRenderSectionRegion",
+		"MixinPauseScreen",
+		"MixinMultiPlayerGameMode",
+		"MixinClientPacketListener",
+		"MixinTitleScreen"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}

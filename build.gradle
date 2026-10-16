@@ -93,4 +93,3 @@ task apiJar(type: Jar, dependsOn: compileJava) {
 
 build.dependsOn apiJar
 
-apply from: "verify-versions.gradle"
