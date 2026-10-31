@@ -1,6 +1,5 @@
 package com.xtoxray.plugin;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -17,12 +16,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** The signed plugin list. Nothing in it is read before its Ed25519 signature has been checked. */
-public record RepositoryIndex(long sequence, Instant expires, List<Entry> plugins, Set<String> revoked) {
-    public record Entry(String id, String name, String description, String author, String version,
-                        int apiVersion, String url, String sha256, List<String> permissions) {
-    }
-
+/** The signed plugin list, including the plugins themselves. Nothing is read before the Ed25519 signature is checked. */
+public record RepositoryIndex(long sequence, Instant expires, List<PluginDefinition> plugins, Set<String> revoked) {
     public static RepositoryIndex parseSigned(byte[] json, byte[] base64Signature, String base64PublicKey, long minSequence)
             throws PluginLoadException {
         try {
@@ -38,31 +33,24 @@ public record RepositoryIndex(long sequence, Instant expires, List<Entry> plugin
         }
         RepositoryIndex index;
         try {
-            index = parse(new String(json, StandardCharsets.UTF_8));
+            JsonObject root = JsonParser.parseString(new String(json, StandardCharsets.UTF_8)).getAsJsonObject();
+            List<PluginDefinition> plugins = new ArrayList<>();
+            for (JsonElement element : root.getAsJsonArray("plugins")) {
+                try {
+                    plugins.add(PluginDefinition.parse(element.getAsString()));
+                } catch (PluginLoadException e) {
+                    // Written for a newer mod version: simply not offered here.
+                }
+            }
+            Set<String> revoked = new HashSet<>();
+            root.getAsJsonArray("revoked").forEach(r -> revoked.add(r.getAsString()));
+            index = new RepositoryIndex(root.get("sequence").getAsLong(), Instant.parse(root.get("expires").getAsString()),
+                List.copyOf(plugins), Set.copyOf(revoked));
         } catch (RuntimeException e) {
             throw new PluginLoadException("Malformed repository index", e);
         }
         if (index.sequence() < minSequence) throw new PluginLoadException("Repository index is older than the last one seen");
         return index;
-    }
-
-    private static RepositoryIndex parse(String json) {
-        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-        List<Entry> entries = new ArrayList<>();
-        for (JsonElement element : root.getAsJsonArray("plugins")) {
-            JsonObject o = element.getAsJsonObject();
-            List<String> permissions = new ArrayList<>();
-            JsonArray array = o.getAsJsonArray("permissions");
-            if (array != null) array.forEach(p -> permissions.add(p.getAsString()));
-            entries.add(new Entry(o.get("id").getAsString(), PluginJar.clean(o.get("name").getAsString()),
-                PluginJar.clean(o.get("description").getAsString()), PluginJar.clean(o.get("author").getAsString()),
-                PluginJar.clean(o.get("version").getAsString()), o.get("apiVersion").getAsInt(),
-                o.get("url").getAsString(), o.get("sha256").getAsString(), List.copyOf(permissions)));
-        }
-        Set<String> revoked = new HashSet<>();
-        root.getAsJsonArray("revoked").forEach(r -> revoked.add(r.getAsString()));
-        return new RepositoryIndex(root.get("sequence").getAsLong(), Instant.parse(root.get("expires").getAsString()),
-            List.copyOf(entries), Set.copyOf(revoked));
     }
 
     public boolean isExpired(Instant now) {

@@ -43,6 +43,7 @@ dependencies {
     minecraft "com.mojang:minecraft:${mcVersion}"
     implementation "net.fabricmc:fabric-loader:${loaderVer}"
     implementation "net.fabricmc.fabric-api:fabric-api:${apiVersion}"
+    include(implementation("org.luaj:luaj-jse:3.0.1"))
     testImplementation platform("org.junit:junit-bom:5.13.4")
     testImplementation "org.junit.jupiter:junit-jupiter"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher"
@@ -50,6 +51,16 @@ dependencies {
 
 test {
     useJUnitPlatform()
+}
+
+fabricApi {
+    configureTests {
+        createSourceSet = true
+        modId = "xtoxray-test"
+        enableGameTests = false
+        enableClientGameTests = true
+        eula = true
+    }
 }
 
 processResources {
@@ -85,18 +96,15 @@ publishing {
     repositories {
     }
 }
-task apiJar(type: Jar, dependsOn: compileJava) {
-    archiveClassifier = 'api'
-    from("$buildDir/classes/java/main") {
-        include 'com/xtoxray/api/plugin/**'
-        include 'com/xtoxray/api/plugin/event/**'
-    }
-    manifest {
-        attributes(
-            'Automatic-Module-Name': 'com.xtoxray.api'
-        )
+
+// Optional: start the client test with a prepared plugin list: -PxtoxrayTestCache=<folder>
+tasks.named("runClientGameTest") {
+    doFirst {
+        if (project.hasProperty("xtoxrayTestCache")) {
+            copy {
+                from project.property("xtoxrayTestCache")
+                into "build/run/clientGameTest/xtoxray/repo-cache"
+            }
+        }
     }
 }
-
-build.dependsOn apiJar
-

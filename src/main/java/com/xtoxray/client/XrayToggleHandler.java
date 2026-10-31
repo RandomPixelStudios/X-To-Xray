@@ -4,11 +4,9 @@ import com.mojang.blaze3d.platform.InputConstants;
 import com.xtoxray.ConfigManager;
 import com.xtoxray.XrayState;
 import com.xtoxray.client.news.NewsManager;
-import com.xtoxray.hitboxes.HitboxesRenderer;
 import com.xtoxray.network.HandshakeNetworking;
 import com.xtoxray.network.HandshakeState;
 import com.xtoxray.plugin.PluginManager;
-import com.xtoxray.api.plugin.event.XrayToggleEvent;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
@@ -32,7 +30,7 @@ public class XrayToggleHandler implements ClientModInitializer {
     public void onInitializeClient() {
         KeyMappingHelper.registerKeyMapping(TOGGLE_KEY);
         ClientTickEvents.END_CLIENT_TICK.register(XrayToggleHandler::onTick);
-        HitboxesRenderer.register();
+        net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents.BEFORE_GIZMOS.register(context -> PluginManager.getInstance().fireRender());
         PluginManager.getInstance().init();
         NewsManager.init();
         HandshakeNetworking.registerClient();
@@ -46,6 +44,7 @@ public class XrayToggleHandler implements ClientModInitializer {
     }
 
     private static void onTick(Minecraft client) {
+        PluginManager.getInstance().fire("tick");
         HandshakeState hs = HandshakeState.getInstance();
         if (client.player != null && client.level != null && client.getCurrentServer() != null) {
             hs.tick();
@@ -68,7 +67,7 @@ public class XrayToggleHandler implements ClientModInitializer {
             }
             rebuildAllSections(client);
             ConfigManager.save();
-            PluginManager.getInstance().post(new XrayToggleEvent(state.isActive()));
+            PluginManager.getInstance().fire("xray_toggle", org.luaj.vm2.LuaValue.valueOf(state.isActive()));
         }
         if (client.player != null && client.level != null) {
             XrayState state = XrayState.getInstance();

@@ -1,30 +1,24 @@
 package com.xtoxray.plugin;
 
-import com.xtoxray.api.plugin.Plugin;
-import com.xtoxray.api.plugin.PluginDescriptor;
 import java.nio.file.Path;
 
 public final class ExternalPlugin {
-    public enum Status { NEEDS_APPROVAL, ENABLED, DISABLED, FAILED, REVOKED }
+    public enum Status { NEEDS_APPROVAL, ENABLED, DISABLED, CRASHED, REVOKED }
 
-    private final PluginJar jar;
+    private final PluginDefinition definition;
     private final Path sourceFile;
-    private Status status = Status.DISABLED;
-    private Plugin instance;
-    private int errors;
+    private Status status = Status.NEEDS_APPROVAL;
+    private LuaPlugin runtime;
 
-    ExternalPlugin(PluginJar jar, Path sourceFile) {
-        this.jar = jar;
+    ExternalPlugin(PluginDefinition definition, Path sourceFile) {
+        this.definition = definition;
         this.sourceFile = sourceFile;
     }
 
-    public PluginDescriptor getDescriptor() { return jar.descriptor(); }
-    public PluginJar getJar() { return jar; }
+    public PluginDefinition getDefinition() { return definition; }
     public Path getSourceFile() { return sourceFile; }
     public Status getStatus() { return status; }
     void setStatus(Status status) { this.status = status; }
-    Plugin getInstance() { return instance; }
-    void setInstance(Plugin instance) { this.instance = instance; }
-    int addError() { return ++errors; }
-    void resetErrors() { errors = 0; }
+    public LuaPlugin getRuntime() { return runtime; }
+    void setRuntime(LuaPlugin runtime) { this.runtime = runtime; }
 }

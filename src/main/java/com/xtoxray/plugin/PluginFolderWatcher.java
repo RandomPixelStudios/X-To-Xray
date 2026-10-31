@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit;
 import net.minecraft.client.Minecraft;
 import org.slf4j.LoggerFactory;
 
-/** Rescans on folder changes. New jars only appear as "needs approval"; nothing is executed. */
+/** Rescans on folder changes. New files only appear as "needs approval". */
 public final class PluginFolderWatcher {
     private static boolean started;
 
@@ -35,7 +35,7 @@ public final class PluginFolderWatcher {
                 if (key == null) continue;
                 boolean changed = false;
                 for (WatchEvent<?> event : key.pollEvents()) {
-                    if (event.context() instanceof Path path && path.toString().endsWith(".jar")) changed = true;
+                    if (event.context() instanceof Path path && path.toString().endsWith(".lua")) changed = true;
                 }
                 key.reset();
                 if (changed) Minecraft.getInstance().execute(PluginManager.getInstance()::rescan);

@@ -1,8 +1,0 @@
-id: example-plugin
-name: ExamplePlugin
-version: 1.0.0
-description: Counts the blocks you mine
-author: YourName
-mainClass: com.example.template.ExamplePlugin
-apiVersion: 2
-permissions: storage

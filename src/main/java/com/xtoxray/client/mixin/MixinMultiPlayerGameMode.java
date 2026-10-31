@@ -1,6 +1,5 @@
 package com.xtoxray.client.mixin;
 
-import com.xtoxray.veinminer.VeinminerHandler;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.core.BlockPos;
@@ -32,9 +31,9 @@ public class MixinMultiPlayerGameMode {
     @Inject(method = "destroyBlock", at = @At("RETURN"), require = 1)
     private void xtoxray$onBlockBroken(BlockPos pos, CallbackInfoReturnable<Boolean> cir) {
         if (Boolean.TRUE.equals(cir.getReturnValue()) && xtoxray$cachedBlock != null) {
-            com.xtoxray.plugin.PluginManager.getInstance().post(new com.xtoxray.api.plugin.event.BlockMinedEvent(
-                net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(xtoxray$cachedBlock).toString(), pos.getX(), pos.getY(), pos.getZ()));
-            VeinminerHandler.getInstance().onBlockBroken(pos, xtoxray$cachedBlock);
+            com.xtoxray.plugin.PluginManager.getInstance().fire("block_mined",
+                org.luaj.vm2.LuaValue.valueOf(net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(xtoxray$cachedBlock).toString()),
+                org.luaj.vm2.LuaValue.valueOf(pos.getX()), org.luaj.vm2.LuaValue.valueOf(pos.getY()), org.luaj.vm2.LuaValue.valueOf(pos.getZ()));
         }
     }
 }

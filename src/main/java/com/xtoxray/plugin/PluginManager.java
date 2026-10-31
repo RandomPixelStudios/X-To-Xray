@@ -3,18 +3,8 @@ package com.xtoxray.plugin;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
-import com.xtoxray.ConfigManager;
-import com.xtoxray.XrayState;
-import com.xtoxray.api.plugin.Plugin;
-import com.xtoxray.api.plugin.PluginContext;
-import com.xtoxray.api.plugin.PluginDescriptor;
-import com.xtoxray.api.plugin.PluginLogger;
-import com.xtoxray.api.plugin.PluginPermission;
-import com.xtoxray.api.plugin.PluginStorage;
-import com.xtoxray.api.plugin.XrayAccess;
-import com.xtoxray.api.plugin.event.EventBus;
-import com.xtoxray.api.plugin.event.PluginEvent;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -22,48 +12,40 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
-import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.Identifier;
-import net.minecraft.world.level.block.Block;
+import org.luaj.vm2.LuaValue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Plugin lifecycle. All methods run on the client thread unless noted. No plugin code runs before approval. */
+/** Installs Lua plugins and runs them only after the user approved that exact file. Runs on the client thread unless noted. */
 public final class PluginManager {
     private static final PluginManager INSTANCE = new PluginManager();
     private static final Logger LOGGER = LoggerFactory.getLogger("XtoXray-Plugins");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final int MAX_ERRORS = 5;
-    private static final Set<String> RESERVED_TABS = Set.of("Xray", "Plugins", "Veinminer", "Hitboxes", "Bug Report");
 
-    public record RejectedJar(Path file, String reason) {
+    public record RejectedFile(Path file, String reason) {
     }
 
-    /** What the user agreed to for one exact jar. */
+    /** What the user agreed to for one exact file. */
     private static final class Trust {
         String sha256;
         boolean enabled;
-        Set<String> permissions = new TreeSet<>();
     }
 
     private final List<ExternalPlugin> plugins = new ArrayList<>();
-    private final List<RejectedJar> rejected = new ArrayList<>();
-    private final Map<String, Plugin> sidebarTabs = new LinkedHashMap<>();
-    private final PluginEventBus eventBus = new PluginEventBus(this::onPluginError);
+    private final List<RejectedFile> rejected = new ArrayList<>();
     private Map<String, Trust> trust = new HashMap<>();
+    private final MinecraftHost host = new MinecraftHost();
     private Path root;
     private PluginRepository repository;
     private volatile RepositoryIndex index;
+    private volatile Map<String, Long> downloads = Map.of();
     private volatile String repositoryStatus = "Loading plugin list...";
 
     private PluginManager() {
@@ -78,6 +60,7 @@ public final class PluginManager {
         repository = new PluginRepository(root.resolve("repo-cache"));
         loadTrust();
         index = repository.loadCached();
+        downloads = repository.loadCachedDownloads();
         rescan();
         PluginFolderWatcher.start(pluginsFolder());
         refreshRepository();
@@ -87,130 +70,168 @@ public final class PluginManager {
         return root.resolve("plugins");
     }
 
-    public void post(PluginEvent event) {
-        eventBus.post(event);
-    }
-
     public List<ExternalPlugin> getExternalPlugins() { return List.copyOf(plugins); }
-    public List<RejectedJar> getRejected() { return List.copyOf(rejected); }
-    public Map<String, Plugin> getSidebarTabs() { return sidebarTabs; }
+    public List<RejectedFile> getRejected() { return List.copyOf(rejected); }
     public String getRepositoryStatus() { return repositoryStatus; }
 
-    /** Plugins offered for download: signed, not expired, compatible, not revoked and not installed. */
-    public List<RepositoryIndex.Entry> getAvailable() {
+    public List<PluginDefinition> getAvailable() {
         RepositoryIndex current = index;
         if (current == null || current.isExpired(Instant.now())) return List.of();
-        Set<String> installed = plugins.stream().map(p -> p.getDescriptor().getId()).collect(Collectors.toSet());
+        Set<String> installed = plugins.stream().map(p -> p.getDefinition().id()).collect(Collectors.toSet());
         return current.plugins().stream()
-            .filter(e -> e.apiVersion() == Plugin.API_VERSION && !installed.contains(e.id()) && !current.revoked().contains(e.sha256()))
+            .filter(p -> !installed.contains(p.id()) && !current.revoked().contains(p.sha256()))
             .toList();
     }
 
-    /** Syncs with the plugins folder. Unchanged jars keep running. */
+    /** Everything in the signed list that is not revoked, including installed plugins. */
+    public List<PluginDefinition> getCatalog() {
+        RepositoryIndex current = index;
+        if (current == null || current.isExpired(Instant.now())) return List.of();
+        return current.plugins().stream().filter(p -> !current.revoked().contains(p.sha256())).toList();
+    }
+
+    public long downloadsOf(String id) {
+        return downloads.getOrDefault(id, -1L);
+    }
+
+    public ExternalPlugin installedById(String id) {
+        return plugins.stream().filter(p -> p.getDefinition().id().equals(id)).findFirst().orElse(null);
+    }
+
     public void rescan() {
         rejected.clear();
-        Map<Path, ExternalPlugin> loaded = new HashMap<>();
-        plugins.forEach(p -> loaded.put(p.getSourceFile(), p));
-        List<ExternalPlugin> result = new ArrayList<>();
+        List<ExternalPlugin> previous = new ArrayList<>(plugins);
+        plugins.clear();
         Set<String> ids = new HashSet<>();
         try {
             Files.createDirectories(pluginsFolder());
-            List<Path> jars;
-            try (Stream<Path> files = Files.list(pluginsFolder())) {
-                jars = files.filter(p -> p.toString().endsWith(".jar") && Files.isRegularFile(p)).sorted().toList();
+            List<Path> files;
+            try (Stream<Path> stream = Files.list(pluginsFolder())) {
+                files = stream.filter(Files::isRegularFile).sorted().toList();
             }
-            for (Path file : jars) {
-                try {
-                    if (Files.size(file) > PluginJar.MAX_JAR_BYTES) throw new PluginLoadException("Jar is too large");
-                    PluginJar jar = PluginJar.read(Files.readAllBytes(file));
-                    if (!ids.add(jar.descriptor().getId())) throw new PluginLoadException("Duplicate plugin id: " + jar.descriptor().getId());
-                    ExternalPlugin existing = loaded.get(file);
-                    if (existing != null && existing.getJar().sha256().equals(jar.sha256())) {
-                        result.add(existing);
-                        loaded.remove(file);
-                    } else {
-                        result.add(new ExternalPlugin(jar, file));
+            for (Path file : files) {
+                String name = file.getFileName().toString().toLowerCase();
+                if (name.endsWith(".jar")) {
+                    rejected.add(new RejectedFile(file, "Jar files are not allowed, plugins must be Lua"));
+                } else if (name.endsWith(".lua")) {
+                    try {
+                        if (Files.size(file) > PluginDefinition.MAX_BYTES) throw new PluginLoadException("Plugin file is too large");
+                        PluginDefinition definition = PluginDefinition.parse(Files.readString(file, StandardCharsets.UTF_8));
+                        if (!ids.add(definition.id())) throw new PluginLoadException("Duplicate plugin id: " + definition.id());
+                        ExternalPlugin same = previous.stream().filter(p -> p.getSourceFile().equals(file)
+                            && p.getDefinition().sha256().equals(definition.sha256())).findFirst().orElse(null);
+                        if (same != null) previous.remove(same);
+                        plugins.add(same != null ? same : new ExternalPlugin(definition, file));
+                    } catch (IOException | PluginLoadException e) {
+                        LOGGER.warn("Rejected plugin {}: {}", file.getFileName(), e.getMessage());
+                        rejected.add(new RejectedFile(file, e.getMessage()));
                     }
-                } catch (IOException | PluginLoadException e) {
-                    LOGGER.warn("Rejected plugin {}: {}", file.getFileName(), e.getMessage());
-                    rejected.add(new RejectedJar(file, e.getMessage()));
                 }
             }
         } catch (IOException e) {
             LOGGER.error("Failed to scan plugins folder", e);
-            return;
         }
-        loaded.values().forEach(this::stop);
-        plugins.clear();
-        plugins.addAll(result);
-        plugins.forEach(this::applyTrust);
+        previous.forEach(this::stop);
+        applyState();
     }
 
-    private void applyTrust(ExternalPlugin plugin) {
-        if (plugin.getInstance() != null) {
-            if (isRevoked(plugin)) {
+    private void applyState() {
+        RepositoryIndex current = index;
+        for (ExternalPlugin plugin : plugins) {
+            Trust entry = trust.get(plugin.getDefinition().id());
+            if (current != null && current.revoked().contains(plugin.getDefinition().sha256())) {
                 stop(plugin);
                 plugin.setStatus(ExternalPlugin.Status.REVOKED);
+            } else if (entry == null || !plugin.getDefinition().sha256().equals(entry.sha256)) {
+                stop(plugin);
+                plugin.setStatus(ExternalPlugin.Status.NEEDS_APPROVAL);
+            } else if (entry.enabled) {
+                if (plugin.getStatus() == ExternalPlugin.Status.CRASHED) continue;
+                plugin.setStatus(ExternalPlugin.Status.ENABLED);
+                start(plugin);
+            } else {
+                stop(plugin);
+                plugin.setStatus(ExternalPlugin.Status.DISABLED);
             }
+        }
+    }
+
+    private void start(ExternalPlugin plugin) {
+        if (plugin.getRuntime() != null) return;
+        PluginDefinition definition = plugin.getDefinition();
+        LuaPlugin runtime = new LuaPlugin(definition, host, root.resolve("plugin-data").resolve(definition.id()));
+        String error = runtime.start();
+        if (error != null) {
+            LOGGER.error("Plugin {} failed to start: {}", definition.id(), error);
+            plugin.setStatus(ExternalPlugin.Status.CRASHED);
             return;
         }
-        if (plugin.getStatus() == ExternalPlugin.Status.FAILED) return;
-        Trust entry = trust.get(plugin.getDescriptor().getId());
-        if (isRevoked(plugin)) {
-            plugin.setStatus(ExternalPlugin.Status.REVOKED);
-        } else if (entry == null || !plugin.getJar().sha256().equals(entry.sha256) || !entry.permissions.containsAll(permissionKeys(plugin))) {
-            plugin.setStatus(ExternalPlugin.Status.NEEDS_APPROVAL);
-        } else if (entry.enabled) {
-            start(plugin);
-        } else {
-            plugin.setStatus(ExternalPlugin.Status.DISABLED);
+        plugin.setRuntime(runtime);
+    }
+
+    private void stop(ExternalPlugin plugin) {
+        LuaPlugin runtime = plugin.getRuntime();
+        if (runtime != null) runtime.saveSettings();
+        plugin.setRuntime(null);
+    }
+
+    /** Sends a game event to all running plugins. */
+    public void fire(String event, LuaValue... args) {
+        for (ExternalPlugin plugin : plugins) {
+            LuaPlugin runtime = plugin.getRuntime();
+            if (runtime == null) continue;
+            runtime.fire(event, args);
+            if (runtime.isStopped()) {
+                stop(plugin);
+                plugin.setStatus(ExternalPlugin.Status.CRASHED);
+            }
         }
     }
 
-    private boolean isRevoked(ExternalPlugin plugin) {
-        RepositoryIndex current = index;
-        return current != null && current.revoked().contains(plugin.getJar().sha256());
+    public void fireRender() {
+        host.beginFrame();
+        fire("render");
     }
 
-    private static Set<String> permissionKeys(ExternalPlugin plugin) {
-        return plugin.getDescriptor().getPermissions().stream().map(PluginPermission::key).collect(Collectors.toCollection(TreeSet::new));
+    /** Running plugins that declared settings; each gets a tab in the menu. */
+    public List<LuaPlugin> getSettingsPlugins() {
+        return plugins.stream().map(ExternalPlugin::getRuntime).filter(r -> r != null && !r.widgets().isEmpty()).toList();
+    }
+
+    public void saveAllSettings() {
+        plugins.stream().map(ExternalPlugin::getRuntime).filter(r -> r != null).forEach(LuaPlugin::saveSettings);
     }
 
     public void approve(ExternalPlugin plugin) {
-        if (isRevoked(plugin)) return;
         Trust entry = new Trust();
-        entry.sha256 = plugin.getJar().sha256();
+        entry.sha256 = plugin.getDefinition().sha256();
         entry.enabled = true;
-        entry.permissions = permissionKeys(plugin);
-        trust.put(plugin.getDescriptor().getId(), entry);
+        trust.put(plugin.getDefinition().id(), entry);
         saveTrust();
-        start(plugin);
+        applyState();
     }
 
     public void setEnabled(ExternalPlugin plugin, boolean enabled) {
-        Trust entry = trust.get(plugin.getDescriptor().getId());
-        if (entry == null || plugin.getStatus() == ExternalPlugin.Status.REVOKED) return;
+        Trust entry = trust.get(plugin.getDefinition().id());
+        if (entry == null) return;
         entry.enabled = enabled;
         saveTrust();
-        if (enabled) {
-            start(plugin);
-        } else {
-            stop(plugin);
-            plugin.setStatus(ExternalPlugin.Status.DISABLED);
-        }
+        if (enabled && plugin.getStatus() == ExternalPlugin.Status.CRASHED) plugin.setStatus(ExternalPlugin.Status.DISABLED);
+        applyState();
     }
 
     public void uninstall(ExternalPlugin plugin) {
         stop(plugin);
-        trust.remove(plugin.getDescriptor().getId());
+        trust.remove(plugin.getDefinition().id());
         saveTrust();
         deleteFile(plugin.getSourceFile());
         plugins.remove(plugin);
+        applyState();
     }
 
-    public void deleteRejected(RejectedJar jar) {
-        deleteFile(jar.file());
-        rejected.remove(jar);
+    public void deleteRejected(RejectedFile file) {
+        deleteFile(file.file());
+        rejected.remove(file);
     }
 
     private static void deleteFile(Path file) {
@@ -221,79 +242,40 @@ public final class PluginManager {
         }
     }
 
-    private void start(ExternalPlugin plugin) {
-        if (plugin.getInstance() != null) return;
-        PluginDescriptor descriptor = plugin.getDescriptor();
+    /** @return null on success, otherwise the error */
+    public String install(PluginDefinition definition) {
         try {
-            PluginClassLoader loader = new PluginClassLoader(descriptor.getId(), plugin.getJar().classes(), PluginManager.class.getClassLoader());
-            Class<?> main = Class.forName(descriptor.getMainClass(), true, loader);
-            Plugin instance = (Plugin) main.getDeclaredConstructor().newInstance();
-            plugin.setInstance(instance);
-            plugin.resetErrors();
-            instance.onEnable(new Context(plugin));
-            plugin.setStatus(ExternalPlugin.Status.ENABLED);
-            String tab = instance.getSidebarTabName();
-            if (tab != null) {
-                String cleanTab = PluginJar.clean(tab);
-                if (!cleanTab.isEmpty() && !RESERVED_TABS.contains(cleanTab) && !sidebarTabs.containsKey(cleanTab)) {
-                    sidebarTabs.put(cleanTab, instance);
-                }
-            }
-            LOGGER.info("Enabled plugin {} v{}", descriptor.getId(), descriptor.getVersion());
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError | StackOverflowError e) {
-            LOGGER.error("Failed to enable plugin {}", descriptor.getId(), e);
-            fail(plugin);
+            Files.createDirectories(pluginsFolder());
+            Path temp = Files.createDirectories(root.resolve("repo-cache")).resolve(definition.id() + ".download");
+            Files.writeString(temp, definition.source(), StandardCharsets.UTF_8);
+            Files.move(temp, pluginsFolder().resolve(definition.id() + ".lua"), StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            LOGGER.error("Failed to install plugin {}", definition.id(), e);
+            return e.getMessage();
         }
-    }
-
-    private void stop(ExternalPlugin plugin) {
-        Plugin instance = plugin.getInstance();
-        if (instance == null) return;
-        try {
-            instance.onDisable(new Context(plugin));
-        } catch (RuntimeException | LinkageError | StackOverflowError e) {
-            LOGGER.error("Plugin {} failed while disabling", plugin.getDescriptor().getId(), e);
-        }
-        eventBus.removeOwner(plugin);
-        sidebarTabs.values().removeIf(p -> p == instance);
-        plugin.setInstance(null);
-    }
-
-    private void fail(ExternalPlugin plugin) {
-        stop(plugin);
-        plugin.setStatus(ExternalPlugin.Status.FAILED);
-    }
-
-    private void onPluginError(Object owner, Throwable error) {
-        ExternalPlugin plugin = (ExternalPlugin) owner;
-        LOGGER.error("Plugin {} threw an error", plugin.getDescriptor().getId(), error);
-        if (plugin.addError() >= MAX_ERRORS) {
-            LOGGER.error("Stopping plugin {} after {} errors", plugin.getDescriptor().getId(), MAX_ERRORS);
-            fail(plugin);
-        }
-    }
-
-    public String[] sidebarContent(Plugin instance) {
-        try {
-            String[] lines = instance.getSidebarTabContent();
-            if (lines == null) return new String[0];
-            return Stream.of(lines).filter(l -> l != null).limit(30).map(PluginJar::clean).toArray(String[]::new);
-        } catch (RuntimeException | LinkageError | StackOverflowError e) {
-            plugins.stream().filter(p -> p.getInstance() == instance).findFirst().ifPresent(p -> onPluginError(p, e));
-            return new String[0];
-        }
+        Thread counter = new Thread(() -> repository.countDownload(definition), "XtoXray-PluginCount");
+        counter.setDaemon(true);
+        counter.start();
+        rescan();
+        plugins.stream().filter(p -> p.getDefinition().sha256().equals(definition.sha256())).findFirst().ifPresent(this::approve);
+        return null;
     }
 
     /** Safe from any thread: network work happens in the background. */
     public void refreshRepository() {
         Thread thread = new Thread(() -> {
             try {
+                try {
+                    downloads = repository.fetchDownloads();
+                } catch (IOException | PluginLoadException | RuntimeException e) {
+                    LOGGER.info("Download counts unavailable: {}", e.getMessage());
+                }
                 RepositoryIndex cached = index;
                 RepositoryIndex fresh = repository.fetch(cached == null ? 0 : cached.sequence());
-                onClientThread(() -> {
+                Minecraft.getInstance().execute(() -> {
                     index = fresh;
                     repositoryStatus = fresh.isExpired(Instant.now()) ? "Plugin list has expired" : "";
-                    plugins.forEach(this::applyTrust);
+                    applyState();
                 });
             } catch (IOException | PluginLoadException e) {
                 LOGGER.warn("Could not update plugin list: {}", e.getMessage());
@@ -304,48 +286,6 @@ public final class PluginManager {
         }, "XtoXray-PluginRepo");
         thread.setDaemon(true);
         thread.start();
-    }
-
-    /** Downloads, verifies and approves a plugin. onDone gets null on success, otherwise the error. */
-    public void install(RepositoryIndex.Entry entry, Consumer<String> onDone) {
-        Thread thread = new Thread(() -> {
-            String error = null;
-            byte[] bytes = null;
-            try {
-                bytes = repository.downloadPlugin(entry);
-                PluginDescriptor descriptor = PluginJar.read(bytes).descriptor();
-                Set<String> declared = descriptor.getPermissions().stream().map(PluginPermission::key).collect(Collectors.toSet());
-                if (!descriptor.getId().equals(entry.id()) || !declared.equals(Set.copyOf(entry.permissions()))) {
-                    throw new PluginLoadException("Plugin does not match the repository listing");
-                }
-                Path temp = Files.createDirectories(root.resolve("repo-cache")).resolve(entry.id() + ".download");
-                Files.write(temp, bytes);
-                Files.createDirectories(pluginsFolder());
-                Files.move(temp, pluginsFolder().resolve(entry.id() + ".jar"), StandardCopyOption.REPLACE_EXISTING);
-            } catch (IOException | PluginLoadException e) {
-                LOGGER.error("Failed to install plugin {}", entry.id(), e);
-                error = e.getMessage();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                error = "Interrupted";
-            }
-            String result = error;
-            onClientThread(() -> {
-                if (result == null) {
-                    rescan();
-                    plugins.stream().filter(p -> p.getDescriptor().getId().equals(entry.id())
-                            && p.getJar().sha256().equalsIgnoreCase(entry.sha256()))
-                        .findFirst().ifPresent(this::approve);
-                }
-                onDone.accept(result);
-            });
-        }, "XtoXray-PluginInstall");
-        thread.setDaemon(true);
-        thread.start();
-    }
-
-    private static void onClientThread(Runnable task) {
-        Minecraft.getInstance().execute(task);
     }
 
     private Path trustFile() {
@@ -369,80 +309,6 @@ public final class PluginManager {
             Files.writeString(trustFile(), GSON.toJson(trust));
         } catch (IOException e) {
             LOGGER.error("Could not save plugin approvals", e);
-        }
-    }
-
-    private final class Context implements PluginContext {
-        private final ExternalPlugin plugin;
-        private final PluginLogger logger;
-        private final PluginStorage storage;
-
-        Context(ExternalPlugin plugin) {
-            this.plugin = plugin;
-            Logger slf4j = LoggerFactory.getLogger("XtoXray-" + plugin.getDescriptor().getId());
-            this.logger = new PluginLogger() {
-                @Override public void info(String message) { slf4j.info("{}", message); }
-                @Override public void warn(String message) { slf4j.warn("{}", message); }
-                @Override public void error(String message) { slf4j.error("{}", message); }
-            };
-            this.storage = new PluginStorageImpl(root.resolve("plugin-data").resolve(plugin.getDescriptor().getId()));
-        }
-
-        private void require(PluginPermission permission) {
-            if (!plugin.getDescriptor().getPermissions().contains(permission)) {
-                throw new SecurityException("Plugin did not declare permission " + permission.key());
-            }
-        }
-
-        @Override public PluginDescriptor getDescriptor() { return plugin.getDescriptor(); }
-        @Override public PluginLogger getLogger() { return logger; }
-        @Override public EventBus getEventBus() { return eventBus.scopedTo(plugin); }
-
-        @Override
-        public PluginStorage getStorage() {
-            require(PluginPermission.STORAGE);
-            return storage;
-        }
-
-        @Override
-        public XrayAccess getXray() {
-            require(PluginPermission.XRAY_READ);
-            return new XrayAccess() {
-                @Override
-                public boolean isActive() {
-                    return XrayState.getInstance().isActive();
-                }
-
-                @Override
-                public Set<String> getWhitelist() {
-                    return XrayState.getInstance().getWhitelist().stream()
-                        .map(b -> BuiltInRegistries.BLOCK.getKey(b).toString()).collect(Collectors.toUnmodifiableSet());
-                }
-
-                @Override
-                public boolean addToWhitelist(String blockId) {
-                    return changeWhitelist(blockId, true);
-                }
-
-                @Override
-                public boolean removeFromWhitelist(String blockId) {
-                    return changeWhitelist(blockId, false);
-                }
-
-                private boolean changeWhitelist(String blockId, boolean add) {
-                    require(PluginPermission.XRAY_WHITELIST);
-                    Identifier id = Identifier.tryParse(blockId);
-                    if (id == null || !BuiltInRegistries.BLOCK.containsKey(id)) return false;
-                    Block block = BuiltInRegistries.BLOCK.getValue(id);
-                    if (add) XrayState.getInstance().addToWhitelist(block);
-                    else XrayState.getInstance().removeFromWhitelist(block);
-                    ConfigManager.save();
-                    if (XrayState.getInstance().isActive()) {
-                        com.xtoxray.client.XrayToggleHandler.rebuildAllSections(Minecraft.getInstance());
-                    }
-                    return true;
-                }
-            };
         }
     }
 }

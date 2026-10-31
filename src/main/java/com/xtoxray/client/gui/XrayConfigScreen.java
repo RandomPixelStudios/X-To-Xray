@@ -4,15 +4,11 @@ import com.xtoxray.ConfigManager;
 import com.xtoxray.XrayState;
 import com.xtoxray.XtoXray;
 import com.xtoxray.client.XrayToggleHandler;
-import com.xtoxray.hitboxes.HitboxesState;
-import com.xtoxray.plugin.PluginData;
-import com.xtoxray.plugin.PluginState;
 import com.xtoxray.plugin.PluginManager;
 import com.xtoxray.plugin.ExternalPlugin;
-import com.xtoxray.api.plugin.Plugin;
-import com.xtoxray.api.plugin.PluginDescriptor;
-import com.xtoxray.api.plugin.PluginPermission;
-import com.xtoxray.veinminer.VeinminerState;
+import com.xtoxray.plugin.LuaPlugin;
+import com.xtoxray.plugin.PluginDefinition;
+import com.xtoxray.plugin.PluginPermission;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -69,21 +65,20 @@ public class XrayConfigScreen extends Screen {
     private int whitelistCols;
     private int whitelistGridY;
 
-    private boolean veinminerEnabled;
-    private int veinminerMaxBlocks;
-    private int veinminerSilkTouchMode;
-    private int veinminerDurabilityCost;
-    private EditBox veinminerBlockInput;
-    private List<Block> veinminerWhitelistCache;
-    private int veinminerWhitelistStartY;
-    private int veinminerWhitelistCols;
-    private int veinminerWhitelistGridY;
-
-    private boolean hitboxesEnabled;
-    private boolean hitboxesSeeThroughWalls;
-    private int hitboxesMaxDistance;
-    private final boolean[] hitboxesShown = new boolean[HitboxesState.CATEGORY_COUNT];
-    private final int[] hitboxesColors = new int[HitboxesState.CATEGORY_COUNT];
+    private static final int BROWSER_LIST_Y = 52;
+    private static final int BROWSER_CARD_H = 56;
+    private static final int BROWSER_BTN_W = 56;
+    private String pluginSearch = "";
+    private boolean pluginSortByName;
+    private boolean pluginShowInstalled;
+    private int pluginScroll;
+    private EditBox pluginSearchBox;
+    private EditBox pluginBlockInput;
+    private List<Block> pluginBlocksCache;
+    private LuaPlugin.Widget pluginBlocksWidget;
+    private int pluginBlocksStartY;
+    private int pluginBlocksCols;
+    private int pluginBlocksGridY;
     private static final int BUG_REPORT_TAB = 1000;
     private final List<String> logLines = Collections.synchronizedList(new ArrayList<>());
     private long logFilePosition = 0;
@@ -109,9 +104,7 @@ public class XrayConfigScreen extends Screen {
     private int cardHeight() {
         int available = this.height - NAV_Y - 60;
         PluginManager pm = PluginManager.getInstance();
-        int builtin = PluginState.getInstance().getPlugins().size();
-        int count = Math.max(1, Math.max(builtin + pm.getAvailable().size(),
-            builtin + pm.getExternalPlugins().size() + pm.getRejected().size()));
+        int count = Math.max(1, Math.max(pm.getAvailable().size(), pm.getExternalPlugins().size() + pm.getRejected().size()));
         int h = (available - (count - 1) * CARD_SPACING) / count;
         return Math.max(40, Math.min(80, h));
     }
@@ -142,19 +135,6 @@ public class XrayConfigScreen extends Screen {
         this.renderDistance = state.getRenderDistance();
         this.renderWhileMoving = state.isRenderWhileMoving();
         this.nightVision = state.isNightVision();
-        VeinminerState vState = VeinminerState.getInstance();
-        this.veinminerEnabled = vState.isEnabled();
-        this.veinminerMaxBlocks = vState.getMaxBlocks();
-        this.veinminerSilkTouchMode = vState.getSilkTouchMode();
-        this.veinminerDurabilityCost = vState.getDurabilityCost();
-        HitboxesState hState = HitboxesState.getInstance();
-        this.hitboxesEnabled = hState.isEnabled();
-        this.hitboxesSeeThroughWalls = hState.isSeeThroughWalls();
-        this.hitboxesMaxDistance = hState.getMaxDistance();
-        for (int i = 0; i < HitboxesState.CATEGORY_COUNT; i++) {
-            this.hitboxesShown[i] = hState.isShown(i);
-            this.hitboxesColors[i] = hState.getColor(i);
-        }
     }
 
     protected void init() {
@@ -163,29 +143,323 @@ public class XrayConfigScreen extends Screen {
         populateWidgets();
     }
 
-    private int getPluginTab(String name) {
-        int idx = baseTabs.length;
-        for (PluginData plugin : PluginState.getInstance().getPlugins()) {
-            if (plugin.getName().equals(name)) {
-                return idx;
+    private LuaPlugin selectedPlugin() {
+        List<LuaPlugin> tabs = PluginManager.getInstance().getSettingsPlugins();
+        int index = selectedTab - 2;
+        return selectedTab != BUG_REPORT_TAB && index >= 0 && index < tabs.size() ? tabs.get(index) : null;
+    }
+
+    private void addPluginSettings(LuaPlugin plugin, int cx, int sw, int cw) {
+        int y = 30;
+        for (LuaPlugin.Widget w : plugin.widgets()) {
+            Object value = plugin.value(w.key());
+            switch (w.kind()) {
+                case TOGGLE -> {
+                    addRenderableWidget(Checkbox.builder(Component.literal(w.label()), this.font).pos(cx, y)
+                        .selected(Boolean.TRUE.equals(value)).onValueChange((cb, sel) -> plugin.setValue(w.key(), sel)).build());
+                    y += 25;
+                }
+                case SLIDER -> {
+                    addRenderableWidget(new XraySlider(cx, y, sw, 20, w.label(), w.min(), w.max(), value instanceof Integer i ? i : w.min(),
+                        val -> plugin.setValue(w.key(), val)));
+                    y += 25;
+                }
+                case CYCLE -> {
+                    addRenderableWidget(Button.builder(Component.literal(w.label() + ": " + PluginDefinition.clean(String.valueOf(value))), btn -> {
+                        int next = (w.options().indexOf(value) + 1) % w.options().size();
+                        plugin.setValue(w.key(), w.options().get(next));
+                        populateWidgets();
+                    }).pos(cx, y).width(sw).build());
+                    y += 25;
+                }
+                case BLOCKS -> { }
             }
-            idx++;
         }
-        for (Map.Entry<String, Plugin> entry : PluginManager.getInstance().getSidebarTabs().entrySet()) {
-            if (entry.getKey().equals(name)) {
-                return idx;
+        addRenderableWidget(Button.builder(Component.literal("Reset to Default"), btn -> {
+            plugin.resetSettings();
+            populateWidgets();
+        }).pos(cx, y).width(sw).build());
+        y += 30;
+        for (LuaPlugin.Widget w : plugin.widgets()) {
+            if (w.kind() != LuaPlugin.WidgetKind.BLOCKS) continue;
+            pluginBlocksWidget = w;
+            pluginBlocksCache = new ArrayList<>();
+            if (plugin.value(w.key()) instanceof List<?> ids) {
+                for (Object id : ids) {
+                    Identifier identifier = Identifier.tryParse(String.valueOf(id));
+                    if (identifier != null) BuiltInRegistries.BLOCK.get(identifier).ifPresent(ref -> pluginBlocksCache.add(ref.value()));
+                }
             }
-            idx++;
+            pluginBlocksStartY = y;
+            pluginBlocksCols = Math.max(1, cw / (SLOT_SIZE + SLOT_GAP));
+            pluginBlocksGridY = y + 44;
+            int inputW = Math.max(60, cw - 52);
+            pluginBlockInput = new EditBox(this.font, cx, y + 18, inputW, 20, Component.literal("Block ID"));
+            pluginBlockInput.setHint(Component.literal("minecraft:diamond_ore"));
+            pluginBlockInput.setMaxLength(64);
+            pluginBlockInput.setCanLoseFocus(true);
+            addRenderableWidget(pluginBlockInput);
+            addRenderableWidget(Button.builder(Component.literal("Add"), btn -> addPluginBlockFromInput(plugin))
+                .pos(cx + inputW + 5, y + 18).width(47).build());
+            break;
         }
-        return -1;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void addPluginBlockFromInput(LuaPlugin plugin) {
+        String text = pluginBlockInput == null ? "" : pluginBlockInput.getValue().trim();
+        if (text.isEmpty() || pluginBlocksWidget == null) return;
+        Identifier id = Identifier.tryParse(text.contains(":") ? text : "minecraft:" + text);
+        if (id == null || !BuiltInRegistries.BLOCK.containsKey(id)) return;
+        if (plugin.value(pluginBlocksWidget.key()) instanceof List<?> list) {
+            ((List<String>) list).add(id.toString());
+        }
+        populateWidgets();
+    }
+
+    public void openPluginsTab(boolean installed) {
+        pluginShowInstalled = installed;
+        openTab(1);
+    }
+
+    public void openTab(int tab) {
+        selectedTab = tab;
+        if (this.font != null) populateWidgets();
+    }
+
+    private List<PluginDefinition> browseEntries() {
+        String query = pluginSearch.toLowerCase();
+        PluginManager pm = PluginManager.getInstance();
+        List<PluginDefinition> entries = new ArrayList<>();
+        for (PluginDefinition entry : pm.getCatalog()) {
+            if ((entry.name() + " " + entry.description() + " " + entry.author() + " " + entry.categories()).toLowerCase().contains(query)) {
+                entries.add(entry);
+            }
+        }
+        java.util.Comparator<PluginDefinition> byName = java.util.Comparator.comparing(e -> e.name().toLowerCase());
+        entries.sort(pluginSortByName ? byName
+            : java.util.Comparator.<PluginDefinition>comparingLong(e -> -pm.downloadsOf(e.id())).thenComparing(byName));
+        return entries;
+    }
+
+    private List<ExternalPlugin> installedEntries() {
+        String query = pluginSearch.toLowerCase();
+        return PluginManager.getInstance().getExternalPlugins().stream()
+            .filter(p -> p.getDefinition().name().toLowerCase().contains(query)).toList();
+    }
+
+    private int browserRows() {
+        return pluginShowInstalled ? installedEntries().size() + PluginManager.getInstance().getRejected().size() : browseEntries().size();
+    }
+
+    private int browserVisibleBottom() {
+        return this.height - 8;
+    }
+
+    private void clampPluginScroll() {
+        int content = browserRows() * (BROWSER_CARD_H + CARD_SPACING);
+        int visible = browserVisibleBottom() - BROWSER_LIST_Y;
+        pluginScroll = Math.max(0, Math.min(pluginScroll, Math.max(0, content - visible)));
+    }
+
+    private boolean browserRowVisible(int y) {
+        return y >= BROWSER_LIST_Y && y + BROWSER_CARD_H <= browserVisibleBottom();
+    }
+
+    private void addPluginBrowser(int cx, int cw) {
+        clampPluginScroll();
+        PluginManager pm = PluginManager.getInstance();
+        int tabW = 52;
+        Button browse = Button.builder(Component.literal("Browse"), btn -> {
+            pluginShowInstalled = false;
+            pluginScroll = 0;
+            populateWidgets();
+        }).pos(cx, 26).width(tabW).build();
+        browse.active = pluginShowInstalled;
+        addRenderableWidget(browse);
+        Button installed = Button.builder(Component.literal("Installed"), btn -> {
+            pluginShowInstalled = true;
+            pluginScroll = 0;
+            populateWidgets();
+        }).pos(cx + tabW + 4, 26).width(tabW).build();
+        installed.active = !pluginShowInstalled;
+        addRenderableWidget(installed);
+        int sortW = 72;
+        int searchX = cx + 2 * tabW + 8;
+        int searchW = Math.max(50, cw - 2 * tabW - sortW - 12);
+        pluginSearchBox = new EditBox(this.font, searchX, 26, searchW, 20, Component.literal("Search"));
+        pluginSearchBox.setHint(Component.literal("Search plugins..."));
+        pluginSearchBox.setValue(pluginSearch);
+        pluginSearchBox.setResponder(text -> {
+            if (text.equals(pluginSearch)) return;
+            pluginSearch = text;
+            pluginScroll = 0;
+            populateWidgets();
+            setFocused(pluginSearchBox);
+            pluginSearchBox.setFocused(true);
+        });
+        addRenderableWidget(pluginSearchBox);
+        if (pluginShowInstalled) {
+            addRenderableWidget(Button.builder(Component.literal("Folder"), btn -> openPluginsFolder())
+                .pos(searchX + searchW + 4, 26).width(sortW).build());
+        } else {
+            addRenderableWidget(Button.builder(Component.literal(pluginSortByName ? "Name" : "Downloads"), btn -> {
+                pluginSortByName = !pluginSortByName;
+                populateWidgets();
+            }).pos(searchX + searchW + 4, 26).width(sortW).build());
+        }
+
+        int right = cx + cw - 8;
+        int y = BROWSER_LIST_Y - pluginScroll;
+        if (pluginShowInstalled) {
+            for (ExternalPlugin ext : installedEntries()) {
+                if (browserRowVisible(y)) addInstalledButtons(ext, right, y);
+                y += BROWSER_CARD_H + CARD_SPACING;
+            }
+            for (PluginManager.RejectedFile file : pm.getRejected()) {
+                if (browserRowVisible(y)) {
+                    addRenderableWidget(Button.builder(Component.literal("Delete"), btn -> {
+                        pm.deleteRejected(file);
+                        populateWidgets();
+                    }).pos(right - BROWSER_BTN_W, y + BROWSER_CARD_H - 26).width(BROWSER_BTN_W).build());
+                }
+                y += BROWSER_CARD_H + CARD_SPACING;
+            }
+        } else {
+            for (PluginDefinition entry : browseEntries()) {
+                if (browserRowVisible(y)) {
+                    ExternalPlugin ext = pm.installedById(entry.id());
+                    boolean current = ext != null && ext.getDefinition().sha256().equals(entry.sha256());
+                    Button action = Button.builder(Component.literal(current ? "Installed" : ext != null ? "Update" : "Install"),
+                        btn -> confirmRepoPlugin(entry)).pos(right - BROWSER_BTN_W, y + BROWSER_CARD_H - 26).width(BROWSER_BTN_W).build();
+                    action.active = !current;
+                    addRenderableWidget(action);
+                }
+                y += BROWSER_CARD_H + CARD_SPACING;
+            }
+        }
+    }
+
+    private void addInstalledButtons(ExternalPlugin ext, int right, int y) {
+        PluginManager pm = PluginManager.getInstance();
+        int by = y + BROWSER_CARD_H - 26;
+        addRenderableWidget(Button.builder(Component.literal("Delete"), btn -> {
+            pm.uninstall(ext);
+            populateWidgets();
+        }).pos(right - BROWSER_BTN_W, by).width(BROWSER_BTN_W).build());
+        ExternalPlugin.Status status = ext.getStatus();
+        int second = right - 2 * BROWSER_BTN_W - 4;
+        if (status == ExternalPlugin.Status.NEEDS_APPROVAL) {
+            addRenderableWidget(Button.builder(Component.literal("Allow"), btn -> confirmLocalPlugin(ext)).pos(second, by).width(BROWSER_BTN_W).build());
+        } else if (status != ExternalPlugin.Status.REVOKED) {
+            boolean on = status == ExternalPlugin.Status.ENABLED;
+            addRenderableWidget(Button.builder(Component.literal(on ? "Disable" : "Enable"), btn -> {
+                pm.setEnabled(ext, !on);
+                populateWidgets();
+            }).pos(second, by).width(BROWSER_BTN_W).build());
+        }
+    }
+
+    private static String formatCount(long count) {
+        if (count < 0) return "-";
+        if (count < 1000) return Long.toString(count);
+        if (count < 1_000_000) return String.format(java.util.Locale.ROOT, "%.1fk", count / 1000.0);
+        return String.format(java.util.Locale.ROOT, "%.1fM", count / 1_000_000.0);
+    }
+
+    private String fit(String text, int width) {
+        if (this.font.width(text) <= width) return text;
+        return this.font.plainSubstrByWidth(text, Math.max(0, width - this.font.width("..."))) + "...";
+    }
+
+    private void drawBrowserCard(GuiGraphicsExtractor gge, int cx, int cw, int y, String id, String name, String author,
+                                 String description, List<String> tags, String rightTop, String rightBottom) {
+        int x1 = cx + cw;
+        int y1 = y + BROWSER_CARD_H;
+        gge.fill(cx, y, x1, y1, CARD_BG);
+        gge.fill(cx, y, x1, y + 1, CARD_BORDER);
+        gge.fill(cx, y1 - 1, x1, y1, CARD_BORDER);
+        gge.fill(cx, y, cx + 1, y1, CARD_BORDER);
+        gge.fill(x1 - 1, y, x1, y1, CARD_BORDER);
+        int icon = 40;
+        int color = 0xFF000000 | java.awt.Color.HSBtoRGB((id.hashCode() & 0xFF) / 255f, 0.55f, 0.65f);
+        gge.fill(cx + 8, y + 8, cx + 8 + icon, y + 8 + icon, color);
+        String letter = name.isEmpty() ? "?" : name.substring(0, 1).toUpperCase();
+        gge.centeredText(this.font, letter, cx + 8 + icon / 2, y + 8 + icon / 2 - 4, TEXT_WHITE);
+        int textX = cx + 8 + icon + 10;
+        int textRight = x1 - 12;
+        int titleW = textRight - textX - this.font.width(rightTop);
+        int descriptionW = textRight - textX - this.font.width(rightBottom);
+        int textW = cw - icon - 26 - 2 * BROWSER_BTN_W;
+        String byline = " by " + author;
+        String title = fit(name, titleW);
+        gge.text(this.font, title, textX, y + 8, TEXT_WHITE);
+        gge.text(this.font, fit(byline, Math.max(0, titleW - this.font.width(title))), textX + this.font.width(title), y + 8, TEXT_GRAY);
+        gge.text(this.font, fit(description, descriptionW), textX, y + 22, TEXT_GRAY);
+        int tagX = textX;
+        for (String tag : tags) {
+            int w = this.font.width(tag) + 8;
+            if (tagX + w > textX + textW) break;
+            gge.fill(tagX, y + 36, tagX + w, y + 48, 0xFF2F3A34);
+            gge.text(this.font, tag, tagX + 4, y + 38, 0xFF7FD6A0);
+            tagX += w + 4;
+        }
+        gge.text(this.font, rightTop, x1 - 8 - this.font.width(rightTop), y + 8, 0xFF55DD88);
+        gge.text(this.font, rightBottom, x1 - 8 - this.font.width(rightBottom), y + 20, TEXT_GRAY);
+    }
+
+    private void drawPluginBrowser(GuiGraphicsExtractor gge, int cx, int cw) {
+        PluginManager pm = PluginManager.getInstance();
+        int y = BROWSER_LIST_Y - pluginScroll;
+        int bottom = browserVisibleBottom();
+        if (pluginShowInstalled) {
+            for (ExternalPlugin ext : installedEntries()) {
+                PluginDefinition d = ext.getDefinition();
+                if (browserRowVisible(y)) {
+                    drawBrowserCard(gge, cx, cw, y, d.id(), d.name(), d.author(), d.description(), d.categories(), statusLabel(ext.getStatus()), "v" + d.version());
+                }
+                y += BROWSER_CARD_H + CARD_SPACING;
+            }
+            for (PluginManager.RejectedFile file : pm.getRejected()) {
+                if (browserRowVisible(y)) {
+                    drawBrowserCard(gge, cx, cw, y, "blocked", file.file().getFileName().toString(), "Unknown", file.reason(), List.of(), "Blocked", "");
+                }
+                y += BROWSER_CARD_H + CARD_SPACING;
+            }
+            if (browserRows() == 0) {
+                gge.text(this.font, "No plugins installed. Drag & drop a .lua file here to import one.", cx, BROWSER_LIST_Y + 6, TEXT_GRAY);
+            }
+        } else {
+            for (PluginDefinition d : browseEntries()) {
+                if (browserRowVisible(y)) {
+                    drawBrowserCard(gge, cx, cw, y, d.id(), d.name(), d.author(), d.description(), d.categories(),
+                        "\u2193 " + formatCount(pm.downloadsOf(d.id())), "v" + d.version());
+                }
+                y += BROWSER_CARD_H + CARD_SPACING;
+            }
+            String status = pluginStatus != null ? pluginStatus : pm.getRepositoryStatus();
+            if (browserRows() == 0) {
+                gge.text(this.font, !status.isEmpty() ? status : "No plugins found.", cx, BROWSER_LIST_Y + 6, TEXT_GRAY);
+            } else if (pluginStatus != null) {
+                gge.text(this.font, pluginStatus, cx, 16, 0xFFFF5555);
+            }
+        }
+        int content = browserRows() * (BROWSER_CARD_H + CARD_SPACING);
+        int visible = bottom - BROWSER_LIST_Y;
+        if (content > visible) {
+            int barH = Math.max(16, visible * visible / content);
+            int barY = BROWSER_LIST_Y + (visible - barH) * pluginScroll / Math.max(1, content - visible);
+            gge.fill(cx + cw + 2, barY, cx + cw + 5, barY + barH, 0xFF777777);
+        }
     }
 
     public void populateWidgets() {
         clearWidgets();
         blockInput = null;
-        veinminerBlockInput = null;
+        pluginBlockInput = null;
+        pluginBlocksCache = null;
+        pluginBlocksWidget = null;
         whitelistCache = new ArrayList<>(XrayState.getInstance().getWhitelist());
-        veinminerWhitelistCache = new ArrayList<>(VeinminerState.getInstance().getWhitelist());
 
         int cx = contentX();
         int sw = sliderWidth();
@@ -196,14 +470,12 @@ public class XrayConfigScreen extends Screen {
         navY += NAV_GAP;
         addRenderableWidget(navButton(1, baseTabs[1], navY));
         navY += NAV_GAP;
-        for (PluginData plugin : PluginState.getInstance().getPlugins()) {
-            if (plugin.isInstalled()) {
-                addRenderableWidget(navButton(getPluginTab(plugin.getName()), plugin.getName(), navY));
-                navY += NAV_GAP;
-            }
+        List<LuaPlugin> settingsPlugins = PluginManager.getInstance().getSettingsPlugins();
+        if (selectedTab != BUG_REPORT_TAB && selectedTab >= 2 + settingsPlugins.size()) {
+            selectedTab = 1;
         }
-        for (Map.Entry<String, Plugin> entry : PluginManager.getInstance().getSidebarTabs().entrySet()) {
-            addRenderableWidget(navButton(getPluginTab(entry.getKey()), entry.getKey(), navY));
+        for (int t = 0; t < settingsPlugins.size(); t++) {
+            addRenderableWidget(navButton(2 + t, settingsPlugins.get(t).definition().name(), navY));
             navY += NAV_GAP;
         }
 
@@ -252,182 +524,10 @@ public class XrayConfigScreen extends Screen {
                     populateWidgets();
                 }
             ).pos(cx, resetY).width(Math.min(200, cw)).build());
-        } else if (selectedTab == getPluginTab("Veinminer")) {
-            int y = 30;
-            addRenderableWidget(Checkbox.builder(Component.literal("Enabled"), this.font)
-                .pos(cx, y)
-                .selected(veinminerEnabled)
-                .onValueChange((cb, sel) -> this.veinminerEnabled = sel)
-                .build());
-            y += 30;
-            addRenderableWidget(new XraySlider(cx, y, sw, 20,
-                "Max Blocks", 1, 64, veinminerMaxBlocks,
-                val -> this.veinminerMaxBlocks = val));
-            y += 30;
-            addRenderableWidget(Button.builder(
-                Component.literal(VeinminerState.getInstance().getSilkTouchModeName()),
-                btn -> {
-                    VeinminerState.getInstance().cycleSilkTouchMode();
-                    this.veinminerSilkTouchMode = VeinminerState.getInstance().getSilkTouchMode();
-                    populateWidgets();
-                }
-            ).pos(cx, y).width(sw).build());
-            y += 30;
-            addRenderableWidget(new XraySlider(cx, y, sw, 20,
-                "Durability Cost", 0, 10, veinminerDurabilityCost,
-                val -> this.veinminerDurabilityCost = val));
-            y += 30;
-            addRenderableWidget(Button.builder(
-                Component.literal("Reset to Default"),
-                btn -> {
-                    VeinminerState.getInstance().resetToDefault();
-                    this.veinminerEnabled = VeinminerState.getInstance().isEnabled();
-                    this.veinminerMaxBlocks = VeinminerState.getInstance().getMaxBlocks();
-                    this.veinminerSilkTouchMode = VeinminerState.getInstance().getSilkTouchMode();
-                    this.veinminerDurabilityCost = VeinminerState.getInstance().getDurabilityCost();
-                    populateWidgets();
-                }
-            ).pos(cx, y).width(sw).build());
-            y += 35;
-            veinminerWhitelistStartY = y;
-            veinminerWhitelistCols = Math.max(1, cw / (SLOT_SIZE + SLOT_GAP));
-            veinminerWhitelistGridY = veinminerWhitelistStartY + 44;
-            int vmInputW = Math.max(60, cw - 52);
-            veinminerBlockInput = new EditBox(this.font, cx, veinminerWhitelistStartY + 18, vmInputW, 20, Component.literal("Block ID"));
-            veinminerBlockInput.setHint(Component.literal("minecraft:diamond_ore"));
-            veinminerBlockInput.setMaxLength(64);
-            veinminerBlockInput.setCanLoseFocus(true);
-            addRenderableWidget(veinminerBlockInput);
-            addRenderableWidget(Button.builder(
-                Component.literal("Add"),
-                btn -> addVeinminerBlockFromInput()
-            ).pos(cx + vmInputW + 5, veinminerWhitelistStartY + 18).width(47).build());
-        } else if (selectedTab == getPluginTab("Hitboxes")) {
-            int y = 30;
-            addRenderableWidget(Checkbox.builder(Component.literal("Enabled"), this.font)
-                .pos(cx, y)
-                .selected(hitboxesEnabled)
-                .onValueChange((cb, sel) -> this.hitboxesEnabled = sel)
-                .build());
-            y += 30;
-            addRenderableWidget(new XraySlider(cx, y, sw, 20,
-                "Max Distance", 8, 256, hitboxesMaxDistance,
-                val -> this.hitboxesMaxDistance = val));
-            y += 30;
-            addRenderableWidget(Checkbox.builder(Component.literal("See Through Walls"), this.font)
-                .pos(cx, y)
-                .selected(hitboxesSeeThroughWalls)
-                .onValueChange((cb, sel) -> this.hitboxesSeeThroughWalls = sel)
-                .build());
-            y += 30;
-            for (int i = 0; i < HitboxesState.CATEGORY_COUNT; i++) {
-                final int cat = i;
-                addRenderableWidget(Checkbox.builder(Component.literal("Show " + HitboxesState.getInstance().getCategoryName(cat)), this.font)
-                    .pos(cx, y)
-                    .selected(hitboxesShown[cat])
-                    .onValueChange((cb, sel) -> this.hitboxesShown[cat] = sel)
-                    .build());
-                int colorBtnW = Math.min(150, Math.max(60, cw - 160));
-                addRenderableWidget(Button.builder(
-                    Component.literal("Color: " + HitboxesState.getInstance().getColorName(cat)),
-                    btn -> {
-                        HitboxesState.getInstance().cycleColor(cat);
-                        this.hitboxesColors[cat] = HitboxesState.getInstance().getColor(cat);
-                        populateWidgets();
-                    }
-                ).pos(cx + cw - colorBtnW, y).width(colorBtnW).build());
-                y += 25;
-            }
-            y += 10;
-            addRenderableWidget(Button.builder(
-                Component.literal("Reset to Default"),
-                btn -> {
-                    HitboxesState.getInstance().resetToDefault();
-                    this.hitboxesEnabled = HitboxesState.getInstance().isEnabled();
-                    this.hitboxesSeeThroughWalls = HitboxesState.getInstance().isSeeThroughWalls();
-                    this.hitboxesMaxDistance = HitboxesState.getInstance().getMaxDistance();
-                    for (int j = 0; j < HitboxesState.CATEGORY_COUNT; j++) {
-                        this.hitboxesShown[j] = HitboxesState.getInstance().isShown(j);
-                        this.hitboxesColors[j] = HitboxesState.getInstance().getColor(j);
-                    }
-                    populateWidgets();
-                }
-            ).pos(cx, y).width(sw).build());
+        } else if (selectedPlugin() != null) {
+            addPluginSettings(selectedPlugin(), cx, sw, cw);
         } else if (selectedTab == 1) {
-            int ch = cardHeight();
-            int btnW = Math.min(60, Math.max(40, pluginColWidth() / 4));
-            int i = 0;
-            for (PluginData plugin : PluginState.getInstance().getPlugins()) {
-                int rowY = 30 + 15 + i * (ch + CARD_SPACING);
-                if (plugin.isInstalled()) {
-                    Button installedBtn = Button.builder(
-                        Component.literal("Download"),
-                        btn -> {}
-                    ).pos(pluginsDownloadX() + pluginColWidth() - btnW - 8, rowY + ch - 6 - 20).width(btnW).build();
-                    installedBtn.active = false;
-                    addRenderableWidget(installedBtn);
-                } else {
-                    addRenderableWidget(Button.builder(
-                        Component.literal("Download"),
-                        btn -> {
-                            PluginState.getInstance().install(plugin.getName());
-                            populateWidgets();
-                        }
-                    ).pos(pluginsDownloadX() + pluginColWidth() - btnW - 8, rowY + ch - 6 - 20).width(btnW).build());
-                }
-                i++;
-            }
-            int instY = 30 + 15;
-            for (PluginData plugin : PluginState.getInstance().getPlugins()) {
-                if (plugin.isInstalled()) {
-                    addRenderableWidget(Button.builder(
-                        Component.literal("Delete"),
-                        btn -> {
-                            PluginState.getInstance().uninstall(plugin.getName());
-                            populateWidgets();
-                        }
-                    ).pos(contentX() + pluginColWidth() - btnW - 8, instY + ch - 6 - 20).width(btnW).build());
-                    instY += ch + CARD_SPACING;
-                }
-            }
-            addRenderableWidget(Button.builder(
-                Component.literal("Folder"),
-                btn -> openPluginsFolder()
-            ).pos(pluginsInstalledRight() - btnW, 12).width(btnW).build());
-            PluginManager pm = PluginManager.getInstance();
-            int actionX = contentX() + pluginColWidth() - btnW - 8;
-            for (ExternalPlugin ext : pm.getExternalPlugins()) {
-                int by = instY + ch - 6 - 20;
-                addRenderableWidget(Button.builder(Component.literal("Delete"), btn -> {
-                    pm.uninstall(ext);
-                    populateWidgets();
-                }).pos(actionX, by).width(btnW).build());
-                ExternalPlugin.Status status = ext.getStatus();
-                if (status == ExternalPlugin.Status.NEEDS_APPROVAL) {
-                    addRenderableWidget(Button.builder(Component.literal("Allow"), btn -> confirmLocalPlugin(ext))
-                        .pos(actionX - btnW - 4, by).width(btnW).build());
-                } else if (status != ExternalPlugin.Status.REVOKED) {
-                    boolean on = status == ExternalPlugin.Status.ENABLED;
-                    addRenderableWidget(Button.builder(Component.literal(on ? "Disable" : "Enable"), btn -> {
-                        pm.setEnabled(ext, !on);
-                        populateWidgets();
-                    }).pos(actionX - btnW - 4, by).width(btnW).build());
-                }
-                instY += ch + CARD_SPACING;
-            }
-            for (PluginManager.RejectedJar jar : pm.getRejected()) {
-                addRenderableWidget(Button.builder(Component.literal("Delete"), btn -> {
-                    pm.deleteRejected(jar);
-                    populateWidgets();
-                }).pos(actionX, instY + ch - 6 - 20).width(btnW).build());
-                instY += ch + CARD_SPACING;
-            }
-            for (com.xtoxray.plugin.RepositoryIndex.Entry entry : pm.getAvailable()) {
-                int rowY = 30 + 15 + i * (ch + CARD_SPACING);
-                addRenderableWidget(Button.builder(Component.literal("Download"), btn -> confirmRepoPlugin(entry))
-                    .pos(pluginsDownloadX() + pluginColWidth() - btnW - 8, rowY + ch - 6 - 20).width(btnW).build());
-                i++;
-            }
+            addPluginBrowser(cx, cw);
         }
 
         else if (selectedTab == BUG_REPORT_TAB) {
@@ -469,60 +569,33 @@ public class XrayConfigScreen extends Screen {
         }
     }
 
-    private void addVeinminerBlockFromInput() {
-        if (veinminerBlockInput == null) return;
-        String text = veinminerBlockInput.getValue().trim();
-        if (text.isEmpty()) return;
-        Identifier id;
-        if (text.contains(":")) {
-            id = Identifier.parse(text);
-        } else {
-            id = Identifier.parse("minecraft:" + text);
-        }
-        if (BuiltInRegistries.BLOCK.containsKey(id)) {
-            Block block = BuiltInRegistries.BLOCK.get(id).map(ref -> ref.value()).orElse(Blocks.AIR);
-            if (block != Blocks.AIR) {
-                VeinminerState.getInstance().addToWhitelist(block);
-                veinminerBlockInput.setValue("");
-                populateWidgets();
-            }
-        }
-    }
-
-    private static String describePermissions(java.util.Collection<PluginPermission> permissions) {
-        if (permissions.isEmpty()) return "Permissions: none";
-        StringBuilder text = new StringBuilder("Permissions:");
-        for (PluginPermission permission : permissions) {
+    private static String describePermissions(PluginDefinition definition) {
+        if (definition.permissions().isEmpty()) return "Permissions: none";
+        StringBuilder text = new StringBuilder("This plugin can:");
+        for (PluginPermission permission : definition.permissions()) {
             text.append("\n- ").append(permission.description());
         }
         return text.toString();
     }
 
     private void confirmLocalPlugin(ExternalPlugin ext) {
-        PluginDescriptor desc = ext.getDescriptor();
+        PluginDefinition definition = ext.getDefinition();
         com.xtoxray.client.ScreenSwitcher.open(new ConfirmScreen(allowed -> {
             if (allowed) PluginManager.getInstance().approve(ext);
             com.xtoxray.client.ScreenSwitcher.open(this);
-        }, Component.literal("Allow " + desc.getName() + " by " + desc.getAuthor() + "?"),
-            Component.literal("This file was NOT reviewed by the plugin repository. Only allow plugins you trust.\n"
-                + describePermissions(desc.getPermissions()))));
+        }, Component.literal("Allow " + definition.name() + " by " + definition.author() + "?"),
+            Component.literal("This file did not come from the plugin repository.\n" + describePermissions(definition))));
     }
 
-    private void confirmRepoPlugin(com.xtoxray.plugin.RepositoryIndex.Entry entry) {
-        List<PluginPermission> permissions = new ArrayList<>();
-        for (String key : entry.permissions()) {
-            PluginPermission.byKey(key).ifPresent(permissions::add);
-        }
+    private void confirmRepoPlugin(PluginDefinition definition) {
         com.xtoxray.client.ScreenSwitcher.open(new ConfirmScreen(allowed -> {
-            com.xtoxray.client.ScreenSwitcher.open(this);
             if (allowed) {
-                PluginManager.getInstance().install(entry, error -> {
-                    if (error != null) pluginStatus = "Install failed: " + error;
-                    populateWidgets();
-                });
+                String error = PluginManager.getInstance().install(definition);
+                if (error != null) pluginStatus = "Install failed: " + error;
             }
-        }, Component.literal("Install " + entry.name() + " " + entry.version() + " by " + entry.author() + "?"),
-            Component.literal(describePermissions(permissions))));
+            com.xtoxray.client.ScreenSwitcher.open(this);
+        }, Component.literal("Install " + definition.name() + " " + definition.version() + " by " + definition.author() + "?"),
+            Component.literal(describePermissions(definition))));
     }
 
     private void openPluginsFolder() {
@@ -545,9 +618,6 @@ public class XrayConfigScreen extends Screen {
                 Path pluginsFolder = PluginManager.getInstance().pluginsFolder();
                 Files.createDirectories(pluginsFolder);
                 String fileName = sourcePath.getFileName().toString();
-                if (!fileName.toLowerCase().endsWith(".jar")) {
-                    fileName = fileName + ".jar";
-                }
                 final String finalFileName = fileName;
                 Path dest = pluginsFolder.resolve(finalFileName);
                 Files.copy(sourcePath, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -574,7 +644,7 @@ public class XrayConfigScreen extends Screen {
         if (selectedTab == 1) {
             for (Path path : paths) {
                 String name = path.getFileName().toString();
-                if (name.toLowerCase().endsWith(".jar")) {
+                if (name.toLowerCase().endsWith(".lua")) {
                     importPluginFromFile(path);
                     return;
                 }
@@ -590,19 +660,7 @@ public class XrayConfigScreen extends Screen {
         state.setRenderDistance(this.renderDistance);
         state.setRenderWhileMoving(this.renderWhileMoving);
         state.setNightVision(this.nightVision);
-        VeinminerState vState = VeinminerState.getInstance();
-        vState.setEnabled(this.veinminerEnabled);
-        vState.setMaxBlocks(this.veinminerMaxBlocks);
-        vState.setSilkTouchMode(this.veinminerSilkTouchMode);
-        vState.setDurabilityCost(this.veinminerDurabilityCost);
-        HitboxesState hState = HitboxesState.getInstance();
-        hState.setEnabled(this.hitboxesEnabled);
-        hState.setSeeThroughWalls(this.hitboxesSeeThroughWalls);
-        hState.setMaxDistance(this.hitboxesMaxDistance);
-        for (int i = 0; i < HitboxesState.CATEGORY_COUNT; i++) {
-            hState.setShown(i, this.hitboxesShown[i]);
-            hState.setColor(i, this.hitboxesColors[i]);
-        }
+        PluginManager.getInstance().saveAllSettings();
         Minecraft mc = Minecraft.getInstance();
         if (state.isActive() && mc.player != null) {
             if (state.isNightVision()) {
@@ -641,23 +699,20 @@ public class XrayConfigScreen extends Screen {
             }
         }
 
-        if (selectedTab == getPluginTab("Veinminer") && veinminerWhitelistCache != null && !veinminerWhitelistCache.isEmpty()) {
+        LuaPlugin clickedPlugin = selectedPlugin();
+        if (clickedPlugin != null && pluginBlocksCache != null && !pluginBlocksCache.isEmpty()) {
             int startX = contentX();
-            int gridTop = veinminerWhitelistGridY;
-            if (mx >= startX && my >= gridTop) {
+            if (mx >= startX && my >= pluginBlocksGridY) {
                 int col = (int) ((mx - startX) / (SLOT_SIZE + SLOT_GAP));
-                int row = (int) ((my - gridTop) / (SLOT_SIZE + SLOT_GAP));
-                if (col >= 0 && col < veinminerWhitelistCols) {
-                    int index = row * veinminerWhitelistCols + col;
-                    if (index >= 0 && index < veinminerWhitelistCache.size()) {
-                        int slotX = startX + col * (SLOT_SIZE + SLOT_GAP);
-                        int slotY = gridTop + row * (SLOT_SIZE + SLOT_GAP);
-                        if (mx >= slotX && mx < slotX + SLOT_SIZE && my >= slotY && my < slotY + SLOT_SIZE) {
-                            VeinminerState.getInstance().removeFromWhitelist(veinminerWhitelistCache.get(index));
-                            populateWidgets();
-                            return true;
-                        }
-                    }
+                int row = (int) ((my - pluginBlocksGridY) / (SLOT_SIZE + SLOT_GAP));
+                int index = row * pluginBlocksCols + col;
+                if (col < pluginBlocksCols && index >= 0 && index < pluginBlocksCache.size()
+                    && mx < startX + col * (SLOT_SIZE + SLOT_GAP) + SLOT_SIZE
+                    && my < pluginBlocksGridY + row * (SLOT_SIZE + SLOT_GAP) + SLOT_SIZE
+                    && clickedPlugin.value(pluginBlocksWidget.key()) instanceof List<?> list) {
+                    list.remove(BuiltInRegistries.BLOCK.getKey(pluginBlocksCache.get(index)).toString());
+                    populateWidgets();
+                    return true;
                 }
             }
         }
@@ -687,7 +742,10 @@ public class XrayConfigScreen extends Screen {
             if (hovered) {
                 gge.fill(x + 1, y + 1, x + SLOT_SIZE - 1, y + SLOT_SIZE - 1, SLOT_HOVER);
             }
-            gge.item(new ItemStack(cache.get(i)), x + 1, y + 1);
+            if (Minecraft.getInstance().level != null) {
+                // Item data is only bound once a world is loaded; creating a stack earlier crashes.
+                gge.item(new ItemStack(cache.get(i)), x + 1, y + 1);
+            }
             if (hovered) {
                 gge.setTooltipForNextFrame(this.font, cache.get(i).getName(), mouseX, mouseY);
             }
@@ -699,27 +757,9 @@ public class XrayConfigScreen extends Screen {
             case NEEDS_APPROVAL -> "Needs approval";
             case ENABLED -> "On";
             case DISABLED -> "Off";
-            case FAILED -> "Crashed";
+            case CRASHED -> "Crashed";
             case REVOKED -> "Blocked as unsafe";
         };
-    }
-
-    private void drawCard(GuiGraphicsExtractor gge, int x0, int y0, int x1, int y1, PluginData plugin) {
-        int ch = y1 - y0;
-        int isz = Math.max(16, Math.min(32, ch - 16));
-        gge.fill(x0, y0, x1, y1, CARD_BG);
-        gge.fill(x0, y0, x1, y0 + 1, CARD_BORDER);
-        gge.fill(x0, y1 - 1, x1, y1, CARD_BORDER);
-        gge.fill(x0, y0, x0 + 1, y1, CARD_BORDER);
-        gge.fill(x1 - 1, y0, x1, y1, CARD_BORDER);
-        int textX = x0 + 8;
-        if (PluginIconRenderer.hasIcon(plugin.getName())) {
-            PluginIconRenderer.render(gge, plugin.getName(), x0 + 8, y0 + (ch - isz) / 2, isz);
-            textX = x0 + 8 + isz + 8;
-        }
-        gge.text(this.font, plugin.getName(), textX, y0 + 6, TEXT_WHITE);
-        gge.text(this.font, plugin.getDescription(), textX, y0 + 6 + 12, TEXT_GRAY);
-        gge.text(this.font, "Made by " + plugin.getCreator(), textX, y0 + 6 + 24, TEXT_GRAY);
     }
 
     private void drawCard(GuiGraphicsExtractor gge, int x0, int y0, int x1, int y1, String name, String description, String creator) {
@@ -755,71 +795,11 @@ public class XrayConfigScreen extends Screen {
             gge.text(this.font, "Xray Settings", cx, 30 - 14, TEXT_WHITE);
             drawWhitelist(gge, whitelistCache, whitelistStartY, whitelistGridY, whitelistCols, mouseX, mouseY);
         } else if (selectedTab == 1) {
-            int instW = pluginsInstalledRight() - cx;
-            gge.text(this.font, "Plugins", cx, 30 - 14, TEXT_WHITE);
-            gge.text(this.font, "Installed", cx, 30, COLUMN_HEADER);
-            gge.text(this.font, "| Drag & Drop JAR to Import", cx + 50, 30, TEXT_GRAY);
-            gge.fill(cx, 30 + 10, cx + instW, 30 + 11, SEPARATOR);
-            gge.text(this.font, "Download", pluginsDownloadX(), 30, COLUMN_HEADER);
-            gge.fill(pluginsDownloadX(), 30 + 10, pluginContentRight(), 30 + 11, SEPARATOR);
-            int i = 0;
-            for (PluginData plugin : PluginState.getInstance().getPlugins()) {
-                int cardY = 30 + 15 + i * (ch + CARD_SPACING);
-                drawCard(gge, pluginsDownloadX(), cardY, pluginContentRight(), cardY + ch, plugin);
-                i++;
-            }
-            int instY = 30 + 15;
-            boolean hasInstalled = false;
-            for (PluginData plugin : PluginState.getInstance().getPlugins()) {
-                if (plugin.isInstalled()) {
-                    hasInstalled = true;
-                    drawCard(gge, cx, instY, cx + instW, instY + ch, plugin);
-                    instY += ch + CARD_SPACING;
-                }
-            }
-            for (ExternalPlugin ext : PluginManager.getInstance().getExternalPlugins()) {
-                hasInstalled = true;
-                PluginDescriptor desc = ext.getDescriptor();
-                drawCard(gge, cx, instY, cx + instW, instY + ch, desc.getName() + " " + desc.getVersion() + " - " + statusLabel(ext.getStatus()), desc.getDescription(), desc.getAuthor());
-                instY += ch + CARD_SPACING;
-            }
-            for (PluginManager.RejectedJar jar : PluginManager.getInstance().getRejected()) {
-                hasInstalled = true;
-                drawCard(gge, cx, instY, cx + instW, instY + ch, jar.file().getFileName() + " - Blocked", jar.reason(), "Unknown");
-                instY += ch + CARD_SPACING;
-            }
-            for (com.xtoxray.plugin.RepositoryIndex.Entry entry : PluginManager.getInstance().getAvailable()) {
-                int cardY = 30 + 15 + i * (ch + CARD_SPACING);
-                drawCard(gge, pluginsDownloadX(), cardY, pluginContentRight(), cardY + ch, entry.name() + " " + entry.version(), entry.description(), entry.author());
-                i++;
-            }
-            String repoStatus = pluginStatus != null ? pluginStatus : PluginManager.getInstance().getRepositoryStatus();
-            if (!repoStatus.isEmpty()) {
-                gge.text(this.font, repoStatus, pluginsDownloadX(), 30 + 15 + i * (ch + CARD_SPACING), TEXT_GRAY);
-            }
-            if (!hasInstalled) {
-                gge.text(this.font, "No plugins installed.", cx + 8, 30 + 20, TEXT_GRAY);
-                gge.text(this.font, "Drag & Drop JAR to import", cx + 8, 30 + 34, TEXT_GRAY);
-            }
-        } else if (selectedTab == getPluginTab("Veinminer")) {
-            gge.text(this.font, "Veinminer Settings", cx, 30 - 14, TEXT_WHITE);
-            drawWhitelist(gge, veinminerWhitelistCache, veinminerWhitelistStartY, veinminerWhitelistGridY, veinminerWhitelistCols, mouseX, mouseY);
-        } else if (selectedTab == getPluginTab("Hitboxes")) {
-            gge.text(this.font, "Hitboxes Settings", cx, 30 - 14, TEXT_WHITE);
-        } else {
-            for (Map.Entry<String, Plugin> entry : PluginManager.getInstance().getSidebarTabs().entrySet()) {
-                if (selectedTab == getPluginTab(entry.getKey())) {
-                    gge.text(this.font, entry.getKey(), cx, 30 - 14, TEXT_WHITE);
-                    String[] lines = PluginManager.getInstance().sidebarContent(entry.getValue());
-                    if (lines != null) {
-                        int ty = 30 + 14;
-                        for (String line : lines) {
-                            ty += 12;
-                            gge.text(this.font, line, cx, ty, TEXT_GRAY);
-                        }
-                    }
-                    break;
-                }
+            drawPluginBrowser(gge, cx, cw);
+        } else if (selectedPlugin() != null) {
+            gge.text(this.font, selectedPlugin().definition().name() + " Settings", cx, 30 - 14, TEXT_WHITE);
+            if (pluginBlocksCache != null) {
+                drawWhitelist(gge, pluginBlocksCache, pluginBlocksStartY, pluginBlocksGridY, pluginBlocksCols, mouseX, mouseY);
             }
         }
         if (selectedTab == BUG_REPORT_TAB) {
@@ -993,6 +973,11 @@ public class XrayConfigScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double deltaX, double deltaY) {
+        if (selectedTab == 1 && mouseX >= contentX()) {
+            pluginScroll -= (int) (deltaY * 20);
+            populateWidgets();
+            return true;
+        }
         if (selectedTab == BUG_REPORT_TAB) {
             logScrollY -= deltaY * 10;
             int lineHeight = 12;

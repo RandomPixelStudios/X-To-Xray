@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "xtoxray-test",
+  "version": "1",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-client-gametest": ["com.xtoxray.gametest.PluginBrowserClientTest"]
+  }
+}
