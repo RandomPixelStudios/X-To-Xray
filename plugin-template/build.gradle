@@ -2,27 +2,20 @@ plugins {
     id 'java'
 }
 
-group = 'com.xtoxray'
+group = 'com.example'
 version = '1.0.0'
 
-repositories {
-    mavenCentral()
-}
-
 dependencies {
-    compileOnly files('libs/xtoxray-2026.28-api.jar')
+    // Copy xtoxray-<version>-api.jar from the XtoXray build into libs/
+    compileOnly fileTree(dir: 'libs', include: '*-api.jar')
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
 }
 
-jar {
-    from sourceSets.main.output
-    manifest {
-        attributes(
-            'Plugin-Class': 'com.xtoxray.template.ExamplePlugin'
-        )
-    }
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
 }

@@ -7,6 +7,8 @@ import com.xtoxray.client.news.NewsManager;
 import com.xtoxray.hitboxes.HitboxesRenderer;
 import com.xtoxray.network.HandshakeNetworking;
 import com.xtoxray.network.HandshakeState;
+import com.xtoxray.plugin.PluginManager;
+import com.xtoxray.api.plugin.event.XrayToggleEvent;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
@@ -31,6 +33,7 @@ public class XrayToggleHandler implements ClientModInitializer {
         KeyMappingHelper.registerKeyMapping(TOGGLE_KEY);
         ClientTickEvents.END_CLIENT_TICK.register(XrayToggleHandler::onTick);
         HitboxesRenderer.register();
+        PluginManager.getInstance().init();
         NewsManager.init();
         HandshakeNetworking.registerClient();
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
@@ -65,6 +68,7 @@ public class XrayToggleHandler implements ClientModInitializer {
             }
             rebuildAllSections(client);
             ConfigManager.save();
+            PluginManager.getInstance().post(new XrayToggleEvent(state.isActive()));
         }
         if (client.player != null && client.level != null) {
             XrayState state = XrayState.getInstance();

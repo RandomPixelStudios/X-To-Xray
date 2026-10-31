@@ -1,35 +1,30 @@
 package com.xtoxray.plugin;
 
 import com.xtoxray.api.plugin.Plugin;
-import com.xtoxray.api.plugin.PluginContext;
 import com.xtoxray.api.plugin.PluginDescriptor;
+import java.nio.file.Path;
 
-import java.net.URL;
-import java.net.URLClassLoader;
+public final class ExternalPlugin {
+    public enum Status { NEEDS_APPROVAL, ENABLED, DISABLED, FAILED, REVOKED }
 
-public class ExternalPlugin {
-    private final PluginDescriptor descriptor;
-    private final Plugin instance;
-    private final URLClassLoader classLoader;
-    private final java.nio.file.Path sourceFile;
-    private boolean enabled;
+    private final PluginJar jar;
+    private final Path sourceFile;
+    private Status status = Status.DISABLED;
+    private Plugin instance;
+    private int errors;
 
-    public ExternalPlugin(PluginDescriptor descriptor, Plugin instance, URLClassLoader classLoader, java.nio.file.Path sourceFile) {
-        this.descriptor = descriptor;
-        this.instance = instance;
-        this.classLoader = classLoader;
+    ExternalPlugin(PluginJar jar, Path sourceFile) {
+        this.jar = jar;
         this.sourceFile = sourceFile;
-        this.enabled = false;
     }
 
-    public PluginDescriptor getDescriptor() { return descriptor; }
-    public Plugin getInstance() { return instance; }
-    public java.nio.file.Path getSourceFile() { return sourceFile; }
-    public boolean isEnabled() { return enabled; }
-    public void setEnabled(boolean enabled) { this.enabled = enabled; }
-    public void close() {
-        if (classLoader != null) {
-            try { classLoader.close(); } catch (Exception e) { }
-        }
-    }
+    public PluginDescriptor getDescriptor() { return jar.descriptor(); }
+    public PluginJar getJar() { return jar; }
+    public Path getSourceFile() { return sourceFile; }
+    public Status getStatus() { return status; }
+    void setStatus(Status status) { this.status = status; }
+    Plugin getInstance() { return instance; }
+    void setInstance(Plugin instance) { this.instance = instance; }
+    int addError() { return ++errors; }
+    void resetErrors() { errors = 0; }
 }

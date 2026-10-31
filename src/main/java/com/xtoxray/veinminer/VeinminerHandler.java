@@ -79,6 +79,8 @@ public class VeinminerHandler {
                     tool.setDamageValue(tool.getDamageValue() + extra);
                 }
             }
+            com.xtoxray.plugin.PluginManager.getInstance().post(new com.xtoxray.api.plugin.event.VeinMinedEvent(
+                net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(sourceBlock).toString(), vein.size()));
         } finally {
             mining = false;
         }

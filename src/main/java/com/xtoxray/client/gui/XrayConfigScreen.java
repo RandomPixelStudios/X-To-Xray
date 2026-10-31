@@ -11,6 +11,7 @@ import com.xtoxray.plugin.PluginManager;
 import com.xtoxray.plugin.ExternalPlugin;
 import com.xtoxray.api.plugin.Plugin;
 import com.xtoxray.api.plugin.PluginDescriptor;
+import com.xtoxray.api.plugin.PluginPermission;
 import com.xtoxray.veinminer.VeinminerState;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -22,6 +23,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -39,6 +41,7 @@ import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 
 public class XrayConfigScreen extends Screen {
+    private String pluginStatus;
     private static final int NAV_W = 120;
     private static final int NAV_Y = 24;
     private static final int NAV_GAP = 24;
@@ -105,7 +108,10 @@ public class XrayConfigScreen extends Screen {
 
     private int cardHeight() {
         int available = this.height - NAV_Y - 60;
-        int count = Math.max(1, PluginState.getInstance().getPlugins().size());
+        PluginManager pm = PluginManager.getInstance();
+        int builtin = PluginState.getInstance().getPlugins().size();
+        int count = Math.max(1, Math.max(builtin + pm.getAvailable().size(),
+            builtin + pm.getExternalPlugins().size() + pm.getRejected().size()));
         int h = (available - (count - 1) * CARD_SPACING) / count;
         return Math.max(40, Math.min(80, h));
     }
@@ -152,10 +158,7 @@ public class XrayConfigScreen extends Screen {
     }
 
     protected void init() {
-        PluginManager.getInstance().initBuiltin();
-        Path pluginsFolder = Minecraft.getInstance().gameDirectory.toPath().resolve("xtoxray").resolve("plugins");
-        PluginManager.getInstance().loadExternalPlugins(pluginsFolder, null);
-        com.xtoxray.plugin.PluginFolderWatcher.start(pluginsFolder);
+        PluginManager.getInstance().rescan();
         startLogWatcher();
         populateWidgets();
     }
@@ -387,27 +390,43 @@ public class XrayConfigScreen extends Screen {
                     instY += ch + CARD_SPACING;
                 }
             }
-            for (ExternalPlugin ext : PluginManager.getInstance().getExternalPlugins()) {
-                int rowY2 = instY;
-                addRenderableWidget(Button.builder(
-                    Component.literal("Folder"),
-                    btn -> {
-                        try {
-                            Path pluginsFolder = Minecraft.getInstance().gameDirectory.toPath().resolve("xtoxray").resolve("plugins");
-                            if (!Files.exists(pluginsFolder)) {
-                                Files.createDirectories(pluginsFolder);
-                            }
-                            if (System.getProperty("os.name").toLowerCase().contains("win")) {
-                                new ProcessBuilder("explorer.exe", pluginsFolder.toAbsolutePath().toString()).start();
-                            } else {
-                                java.awt.Desktop.getDesktop().open(pluginsFolder.toFile());
-                            }
-                        } catch (Exception e) {
-                            XtoXray.LOGGER.error("Failed to open plugins folder", e);
-                        }
-                    }
-                ).pos(pluginsInstalledRight() - btnW - 8, rowY2 + ch - 6 - 20).width(btnW).build());
+            addRenderableWidget(Button.builder(
+                Component.literal("Folder"),
+                btn -> openPluginsFolder()
+            ).pos(pluginsInstalledRight() - btnW, 12).width(btnW).build());
+            PluginManager pm = PluginManager.getInstance();
+            int actionX = contentX() + pluginColWidth() - btnW - 8;
+            for (ExternalPlugin ext : pm.getExternalPlugins()) {
+                int by = instY + ch - 6 - 20;
+                addRenderableWidget(Button.builder(Component.literal("Delete"), btn -> {
+                    pm.uninstall(ext);
+                    populateWidgets();
+                }).pos(actionX, by).width(btnW).build());
+                ExternalPlugin.Status status = ext.getStatus();
+                if (status == ExternalPlugin.Status.NEEDS_APPROVAL) {
+                    addRenderableWidget(Button.builder(Component.literal("Allow"), btn -> confirmLocalPlugin(ext))
+                        .pos(actionX - btnW - 4, by).width(btnW).build());
+                } else if (status != ExternalPlugin.Status.REVOKED) {
+                    boolean on = status == ExternalPlugin.Status.ENABLED;
+                    addRenderableWidget(Button.builder(Component.literal(on ? "Disable" : "Enable"), btn -> {
+                        pm.setEnabled(ext, !on);
+                        populateWidgets();
+                    }).pos(actionX - btnW - 4, by).width(btnW).build());
+                }
                 instY += ch + CARD_SPACING;
+            }
+            for (PluginManager.RejectedJar jar : pm.getRejected()) {
+                addRenderableWidget(Button.builder(Component.literal("Delete"), btn -> {
+                    pm.deleteRejected(jar);
+                    populateWidgets();
+                }).pos(actionX, instY + ch - 6 - 20).width(btnW).build());
+                instY += ch + CARD_SPACING;
+            }
+            for (com.xtoxray.plugin.RepositoryIndex.Entry entry : pm.getAvailable()) {
+                int rowY = 30 + 15 + i * (ch + CARD_SPACING);
+                addRenderableWidget(Button.builder(Component.literal("Download"), btn -> confirmRepoPlugin(entry))
+                    .pos(pluginsDownloadX() + pluginColWidth() - btnW - 8, rowY + ch - 6 - 20).width(btnW).build());
+                i++;
             }
         }
 
@@ -470,13 +489,61 @@ public class XrayConfigScreen extends Screen {
         }
     }
 
+    private static String describePermissions(java.util.Collection<PluginPermission> permissions) {
+        if (permissions.isEmpty()) return "Permissions: none";
+        StringBuilder text = new StringBuilder("Permissions:");
+        for (PluginPermission permission : permissions) {
+            text.append("\n- ").append(permission.description());
+        }
+        return text.toString();
+    }
+
+    private void confirmLocalPlugin(ExternalPlugin ext) {
+        PluginDescriptor desc = ext.getDescriptor();
+        com.xtoxray.client.ScreenSwitcher.open(new ConfirmScreen(allowed -> {
+            if (allowed) PluginManager.getInstance().approve(ext);
+            com.xtoxray.client.ScreenSwitcher.open(this);
+        }, Component.literal("Allow " + desc.getName() + " by " + desc.getAuthor() + "?"),
+            Component.literal("This file was NOT reviewed by the plugin repository. Only allow plugins you trust.\n"
+                + describePermissions(desc.getPermissions()))));
+    }
+
+    private void confirmRepoPlugin(com.xtoxray.plugin.RepositoryIndex.Entry entry) {
+        List<PluginPermission> permissions = new ArrayList<>();
+        for (String key : entry.permissions()) {
+            PluginPermission.byKey(key).ifPresent(permissions::add);
+        }
+        com.xtoxray.client.ScreenSwitcher.open(new ConfirmScreen(allowed -> {
+            com.xtoxray.client.ScreenSwitcher.open(this);
+            if (allowed) {
+                PluginManager.getInstance().install(entry, error -> {
+                    if (error != null) pluginStatus = "Install failed: " + error;
+                    populateWidgets();
+                });
+            }
+        }, Component.literal("Install " + entry.name() + " " + entry.version() + " by " + entry.author() + "?"),
+            Component.literal(describePermissions(permissions))));
+    }
+
+    private void openPluginsFolder() {
+        try {
+            Path pluginsFolder = PluginManager.getInstance().pluginsFolder();
+            Files.createDirectories(pluginsFolder);
+            if (System.getProperty("os.name").toLowerCase().contains("win")) {
+                new ProcessBuilder("explorer.exe", pluginsFolder.toAbsolutePath().toString()).start();
+            } else {
+                java.awt.Desktop.getDesktop().open(pluginsFolder.toFile());
+            }
+        } catch (Exception e) {
+            XtoXray.LOGGER.error("Failed to open plugins folder", e);
+        }
+    }
+
     private void importPluginFromFile(Path sourcePath) {
         new Thread(() -> {
             try {
-                Path pluginsFolder = Minecraft.getInstance().gameDirectory.toPath().resolve("xtoxray").resolve("plugins");
-                if (!Files.exists(pluginsFolder)) {
-                    Files.createDirectories(pluginsFolder);
-                }
+                Path pluginsFolder = PluginManager.getInstance().pluginsFolder();
+                Files.createDirectories(pluginsFolder);
                 String fileName = sourcePath.getFileName().toString();
                 if (!fileName.toLowerCase().endsWith(".jar")) {
                     fileName = fileName + ".jar";
@@ -484,15 +551,14 @@ public class XrayConfigScreen extends Screen {
                 final String finalFileName = fileName;
                 Path dest = pluginsFolder.resolve(finalFileName);
                 Files.copy(sourcePath, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                PluginManager.getInstance().loadExternalPlugins(pluginsFolder, null);
                 Minecraft.getInstance().execute(() -> {
+                    PluginManager.getInstance().rescan();
                     populateWidgets();
                 });
             } catch (Exception e) {
                 XtoXray.LOGGER.error("Failed to import plugin from {}", sourcePath, e);
                 Minecraft.getInstance().execute(() -> {
-                    bugReportStatus = "Failed to import plugin.";
-                    bugReportStatusColor = 0xFFFF5555;
+                    pluginStatus = "Failed to import plugin.";
                     populateWidgets();
                 });
             }
@@ -628,6 +694,16 @@ public class XrayConfigScreen extends Screen {
         }
     }
 
+    private static String statusLabel(ExternalPlugin.Status status) {
+        return switch (status) {
+            case NEEDS_APPROVAL -> "Needs approval";
+            case ENABLED -> "On";
+            case DISABLED -> "Off";
+            case FAILED -> "Crashed";
+            case REVOKED -> "Blocked as unsafe";
+        };
+    }
+
     private void drawCard(GuiGraphicsExtractor gge, int x0, int y0, int x1, int y1, PluginData plugin) {
         int ch = y1 - y0;
         int isz = Math.max(16, Math.min(32, ch - 16));
@@ -666,7 +742,9 @@ public class XrayConfigScreen extends Screen {
         }
     }
 
-    public void extractRenderState(GuiGraphicsExtractor gge, int mouseX, int mouseY, float delta) {
+    public void extractRenderState(GuiGraphicsExtractor gge) {
+        int mouseX = gge.mouseX();
+        int mouseY = gge.mouseY();
         int cx = contentX();
         int cw = contentWidth();
         int ch = cardHeight();
@@ -702,8 +780,22 @@ public class XrayConfigScreen extends Screen {
             for (ExternalPlugin ext : PluginManager.getInstance().getExternalPlugins()) {
                 hasInstalled = true;
                 PluginDescriptor desc = ext.getDescriptor();
-                drawCard(gge, cx, instY, cx + instW, instY + ch, desc.getName(), desc.getDescription(), desc.getAuthor());
+                drawCard(gge, cx, instY, cx + instW, instY + ch, desc.getName() + " " + desc.getVersion() + " - " + statusLabel(ext.getStatus()), desc.getDescription(), desc.getAuthor());
                 instY += ch + CARD_SPACING;
+            }
+            for (PluginManager.RejectedJar jar : PluginManager.getInstance().getRejected()) {
+                hasInstalled = true;
+                drawCard(gge, cx, instY, cx + instW, instY + ch, jar.file().getFileName() + " - Blocked", jar.reason(), "Unknown");
+                instY += ch + CARD_SPACING;
+            }
+            for (com.xtoxray.plugin.RepositoryIndex.Entry entry : PluginManager.getInstance().getAvailable()) {
+                int cardY = 30 + 15 + i * (ch + CARD_SPACING);
+                drawCard(gge, pluginsDownloadX(), cardY, pluginContentRight(), cardY + ch, entry.name() + " " + entry.version(), entry.description(), entry.author());
+                i++;
+            }
+            String repoStatus = pluginStatus != null ? pluginStatus : PluginManager.getInstance().getRepositoryStatus();
+            if (!repoStatus.isEmpty()) {
+                gge.text(this.font, repoStatus, pluginsDownloadX(), 30 + 15 + i * (ch + CARD_SPACING), TEXT_GRAY);
             }
             if (!hasInstalled) {
                 gge.text(this.font, "No plugins installed.", cx + 8, 30 + 20, TEXT_GRAY);
@@ -718,7 +810,7 @@ public class XrayConfigScreen extends Screen {
             for (Map.Entry<String, Plugin> entry : PluginManager.getInstance().getSidebarTabs().entrySet()) {
                 if (selectedTab == getPluginTab(entry.getKey())) {
                     gge.text(this.font, entry.getKey(), cx, 30 - 14, TEXT_WHITE);
-                    String[] lines = entry.getValue().getSidebarTabContent();
+                    String[] lines = PluginManager.getInstance().sidebarContent(entry.getValue());
                     if (lines != null) {
                         int ty = 30 + 14;
                         for (String line : lines) {
@@ -771,7 +863,7 @@ public class XrayConfigScreen extends Screen {
             }
         }
 
-        super.extractRenderState(gge, mouseX, mouseY, delta);
+        super.extractRenderState(gge);
     }
 
     private void startLogWatcher() {

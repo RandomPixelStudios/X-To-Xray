@@ -1,9 +1,17 @@
 package com.xtoxray.api.plugin;
 
-import java.nio.file.Path;
+import com.xtoxray.api.plugin.event.EventBus;
 
 public interface PluginContext {
+    PluginDescriptor getDescriptor();
+
     PluginLogger getLogger();
-    Path getDataFolder();
-    com.xtoxray.api.plugin.event.EventBus getEventBus();
+
+    EventBus getEventBus();
+
+    /** Requires the "storage" permission, otherwise throws SecurityException. */
+    PluginStorage getStorage();
+
+    /** Requires "xray.read"; changing the whitelist requires "xray.whitelist". */
+    XrayAccess getXray();
 }

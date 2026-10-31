@@ -1,73 +1,49 @@
 package com.xtoxray.plugin;
 
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardWatchEventKinds;
+import java.nio.file.WatchEvent;
+import java.nio.file.WatchKey;
+import java.nio.file.WatchService;
+import java.util.concurrent.TimeUnit;
 import net.minecraft.client.Minecraft;
+import org.slf4j.LoggerFactory;
 
-import java.nio.file.*;
-import java.util.HashSet;
-import java.util.Set;
+/** Rescans on folder changes. New jars only appear as "needs approval"; nothing is executed. */
+public final class PluginFolderWatcher {
+    private static boolean started;
 
-public class PluginFolderWatcher implements Runnable {
-    private static PluginFolderWatcher instance;
-    private static boolean running = false;
-
-    private Path pluginsFolder;
-    private Set<Path> knownFiles = new HashSet<>();
-
-    private PluginFolderWatcher(Path pluginsFolder) {
-        this.pluginsFolder = pluginsFolder;
+    private PluginFolderWatcher() {
     }
 
-    public static synchronized void start(Path pluginsFolder) {
-        if (running) return;
-        if (instance == null || !instance.pluginsFolder.equals(pluginsFolder)) {
-            instance = new PluginFolderWatcher(pluginsFolder);
-        }
-        running = true;
-        new Thread(instance, "PluginWatcher").start();
+    public static synchronized void start(Path folder) {
+        if (started) return;
+        started = true;
+        Thread thread = new Thread(() -> run(folder), "XtoXray-PluginWatcher");
+        thread.setDaemon(true);
+        thread.start();
     }
 
-    @Override
-    public void run() {
-        try {
-            if (!Files.exists(pluginsFolder)) {
-                Files.createDirectories(pluginsFolder);
-            }
-
-            try (var stream = Files.list(pluginsFolder)) {
-                stream.filter(p -> p.toString().endsWith(".jar"))
-                      .forEach(knownFiles::add);
-            }
-
-            WatchService watcher = FileSystems.getDefault().newWatchService();
-            pluginsFolder.register(watcher, StandardWatchEventKinds.ENTRY_CREATE, StandardWatchEventKinds.ENTRY_MODIFY);
-
-            while (running) {
-                WatchKey key = watcher.poll(2, java.util.concurrent.TimeUnit.SECONDS);
+    private static void run(Path folder) {
+        try (WatchService watcher = FileSystems.getDefault().newWatchService()) {
+            Files.createDirectories(folder);
+            folder.register(watcher, StandardWatchEventKinds.ENTRY_CREATE, StandardWatchEventKinds.ENTRY_MODIFY, StandardWatchEventKinds.ENTRY_DELETE);
+            while (true) {
+                WatchKey key = watcher.poll(2, TimeUnit.SECONDS);
                 if (key == null) continue;
-
                 boolean changed = false;
                 for (WatchEvent<?> event : key.pollEvents()) {
-                    if (event.kind() == StandardWatchEventKinds.OVERFLOW) continue;
-
-                    @SuppressWarnings("unchecked")
-                    WatchEvent<Path> ev = (WatchEvent<Path>) event;
-                    Path fileName = ev.context();
-                    Path fullPath = pluginsFolder.resolve(fileName);
-
-                    if (fullPath.toString().endsWith(".jar") && !knownFiles.contains(fullPath)) {
-                        knownFiles.add(fullPath);
-                        changed = true;
-                    }
+                    if (event.context() instanceof Path path && path.toString().endsWith(".jar")) changed = true;
                 }
                 key.reset();
-
-                if (changed) {
-                    Minecraft.getInstance().execute(() -> {
-                        PluginManager.getInstance().loadExternalPlugins(pluginsFolder, null);
-                    });
-                }
+                if (changed) Minecraft.getInstance().execute(PluginManager.getInstance()::rescan);
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         } catch (Exception e) {
+            LoggerFactory.getLogger("XtoXray-Plugins").warn("Plugin folder watcher stopped", e);
         }
     }
 }
