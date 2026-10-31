@@ -14,6 +14,7 @@ import net.minecraft.core.BlockPos;
 public class PluginBrowserClientTest implements FabricClientGameTest {
     @Override
     public void runTest(ClientGameTestContext context) {
+        System.setProperty("xtoxray.noDownloadCount", "true");
         context.runOnClient(client -> {
             XrayConfigScreen screen = new XrayConfigScreen();
             ScreenSwitcher.open(screen);

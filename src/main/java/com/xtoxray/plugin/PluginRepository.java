@@ -82,7 +82,7 @@ final class PluginRepository {
 
     /** Fetches the release asset so GitHub counts the download. The installed code always comes from the signed list. */
     void countDownload(PluginDefinition definition) {
-        if (!definition.version().matches("[0-9A-Za-z._]{1,32}")) return;
+        if (Boolean.getBoolean("xtoxray.noDownloadCount") || !definition.version().matches("[0-9A-Za-z._]{1,32}")) return;
         try {
             download("https://github.com/RandomPixelStudios/X-To-Xray-Plugins/releases/download/plugins/"
                 + definition.id() + "-" + definition.version() + ".lua", PluginDefinition.MAX_BYTES);

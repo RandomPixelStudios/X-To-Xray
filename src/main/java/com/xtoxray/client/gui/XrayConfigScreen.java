@@ -65,9 +65,11 @@ public class XrayConfigScreen extends Screen {
     private int whitelistCols;
     private int whitelistGridY;
 
-    private static final int BROWSER_LIST_Y = 52;
-    private static final int BROWSER_CARD_H = 56;
-    private static final int BROWSER_BTN_W = 56;
+    private static final int BROWSER_LIST_Y = 62;
+    private static final int BROWSER_ROW_H = 26;
+    private String pluginSelected;
+    private static final java.net.URI PUBLISHING_GUIDE =
+        java.net.URI.create("https://github.com/RandomPixelStudios/X-To-Xray-Plugins/blob/main/publish.md");
     private String pluginSearch = "";
     private boolean pluginSortByName;
     private boolean pluginShowInstalled;
@@ -248,8 +250,48 @@ public class XrayConfigScreen extends Screen {
             .filter(p -> p.getDefinition().name().toLowerCase().contains(query)).toList();
     }
 
-    private int browserRows() {
-        return pluginShowInstalled ? installedEntries().size() + PluginManager.getInstance().getRejected().size() : browseEntries().size();
+    /** One line of the plugin list; the same shape for catalog, installed and blocked entries. */
+    private record BrowserRow(String key, String id, String name, String author, String version, String description,
+                              List<String> categories, List<String> permissions, String status,
+                              PluginDefinition catalog, ExternalPlugin installed, PluginManager.RejectedFile rejected) {
+    }
+
+    private static List<String> permissionLines(PluginDefinition definition) {
+        return definition.permissions().stream().map(PluginPermission::description).sorted().toList();
+    }
+
+    private List<BrowserRow> browserRows() {
+        PluginManager pm = PluginManager.getInstance();
+        List<BrowserRow> rows = new ArrayList<>();
+        if (pluginShowInstalled) {
+            for (ExternalPlugin ext : installedEntries()) {
+                PluginDefinition d = ext.getDefinition();
+                rows.add(new BrowserRow(d.id(), d.id(), d.name(), d.author(), d.version(), d.description(), d.categories(),
+                    permissionLines(d), statusLabel(ext.getStatus()), null, ext, null));
+            }
+            for (PluginManager.RejectedFile file : pm.getRejected()) {
+                String name = file.file().getFileName().toString();
+                rows.add(new BrowserRow("file:" + name, "blocked", name, "Unknown", "-", file.reason(), List.of(), List.of(),
+                    "Blocked", null, null, file));
+            }
+        } else {
+            for (PluginDefinition d : browseEntries()) {
+                rows.add(new BrowserRow(d.id(), d.id(), d.name(), d.author(), d.version(), d.description(), d.categories(),
+                    permissionLines(d), "", d, pm.installedById(d.id()), null));
+            }
+        }
+        return rows;
+    }
+
+    private BrowserRow selectedRow(List<BrowserRow> rows) {
+        for (BrowserRow row : rows) {
+            if (row.key().equals(pluginSelected)) return row;
+        }
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    private int browserListWidth(int cw) {
+        return Math.max(110, cw * 2 / 5);
     }
 
     private int browserVisibleBottom() {
@@ -257,37 +299,35 @@ public class XrayConfigScreen extends Screen {
     }
 
     private void clampPluginScroll() {
-        int content = browserRows() * (BROWSER_CARD_H + CARD_SPACING);
+        int content = browserRows().size() * BROWSER_ROW_H;
         int visible = browserVisibleBottom() - BROWSER_LIST_Y;
         pluginScroll = Math.max(0, Math.min(pluginScroll, Math.max(0, content - visible)));
     }
 
-    private boolean browserRowVisible(int y) {
-        return y >= BROWSER_LIST_Y && y + BROWSER_CARD_H <= browserVisibleBottom();
-    }
-
     private void addPluginBrowser(int cx, int cw) {
         clampPluginScroll();
-        PluginManager pm = PluginManager.getInstance();
         int tabW = 52;
         Button browse = Button.builder(Component.literal("Browse"), btn -> {
             pluginShowInstalled = false;
             pluginScroll = 0;
+            pluginSelected = null;
             populateWidgets();
-        }).pos(cx, 26).width(tabW).build();
+        }).pos(cx, 16).width(tabW).build();
         browse.active = pluginShowInstalled;
         addRenderableWidget(browse);
         Button installed = Button.builder(Component.literal("Installed"), btn -> {
             pluginShowInstalled = true;
             pluginScroll = 0;
+            pluginSelected = null;
             populateWidgets();
-        }).pos(cx + tabW + 4, 26).width(tabW).build();
+        }).pos(cx + tabW + 4, 16).width(tabW).build();
         installed.active = !pluginShowInstalled;
         addRenderableWidget(installed);
+        addRenderableWidget(Button.builder(Component.literal("Upload"), btn -> openPublishingGuide())
+            .pos(cx + 2 * (tabW + 4), 16).width(tabW).build());
         int sortW = 72;
-        int searchX = cx + 2 * tabW + 8;
-        int searchW = Math.max(50, cw - 2 * tabW - sortW - 12);
-        pluginSearchBox = new EditBox(this.font, searchX, 26, searchW, 20, Component.literal("Search"));
+        int searchW = Math.max(50, cw - sortW - 4);
+        pluginSearchBox = new EditBox(this.font, cx, 38, searchW, 20, Component.literal("Search"));
         pluginSearchBox.setHint(Component.literal("Search plugins..."));
         pluginSearchBox.setValue(pluginSearch);
         pluginSearchBox.setResponder(text -> {
@@ -301,63 +341,64 @@ public class XrayConfigScreen extends Screen {
         addRenderableWidget(pluginSearchBox);
         if (pluginShowInstalled) {
             addRenderableWidget(Button.builder(Component.literal("Folder"), btn -> openPluginsFolder())
-                .pos(searchX + searchW + 4, 26).width(sortW).build());
+                .pos(cx + searchW + 4, 38).width(sortW).build());
         } else {
             addRenderableWidget(Button.builder(Component.literal(pluginSortByName ? "Name" : "Downloads"), btn -> {
                 pluginSortByName = !pluginSortByName;
                 populateWidgets();
-            }).pos(searchX + searchW + 4, 26).width(sortW).build());
+            }).pos(cx + searchW + 4, 38).width(sortW).build());
         }
+        BrowserRow row = selectedRow(browserRows());
+        if (row != null) addDetailButtons(row, cx + browserListWidth(cw) + 6, cx + cw);
+    }
 
-        int right = cx + cw - 8;
-        int y = BROWSER_LIST_Y - pluginScroll;
-        if (pluginShowInstalled) {
-            for (ExternalPlugin ext : installedEntries()) {
-                if (browserRowVisible(y)) addInstalledButtons(ext, right, y);
-                y += BROWSER_CARD_H + CARD_SPACING;
-            }
-            for (PluginManager.RejectedFile file : pm.getRejected()) {
-                if (browserRowVisible(y)) {
-                    addRenderableWidget(Button.builder(Component.literal("Delete"), btn -> {
-                        pm.deleteRejected(file);
-                        populateWidgets();
-                    }).pos(right - BROWSER_BTN_W, y + BROWSER_CARD_H - 26).width(BROWSER_BTN_W).build());
-                }
-                y += BROWSER_CARD_H + CARD_SPACING;
-            }
+    private void addDetailButtons(BrowserRow row, int left, int right) {
+        PluginManager pm = PluginManager.getInstance();
+        int y = browserVisibleBottom() - 26;
+        int width = right - left - 12;
+        int x = left + 6;
+        if (row.rejected() != null) {
+            addRenderableWidget(Button.builder(Component.literal("Delete"), btn -> {
+                pm.deleteRejected(row.rejected());
+                populateWidgets();
+            }).pos(x, y).width(width).build());
+        } else if (row.catalog() != null) {
+            ExternalPlugin ext = row.installed();
+            boolean current = ext != null && ext.getDefinition().sha256().equals(row.catalog().sha256());
+            Button action = Button.builder(Component.literal(current ? "Installed" : ext != null ? "Update" : "Install"),
+                btn -> confirmRepoPlugin(row.catalog())).pos(x, y).width(width).build();
+            action.active = !current;
+            addRenderableWidget(action);
         } else {
-            for (PluginDefinition entry : browseEntries()) {
-                if (browserRowVisible(y)) {
-                    ExternalPlugin ext = pm.installedById(entry.id());
-                    boolean current = ext != null && ext.getDefinition().sha256().equals(entry.sha256());
-                    Button action = Button.builder(Component.literal(current ? "Installed" : ext != null ? "Update" : "Install"),
-                        btn -> confirmRepoPlugin(entry)).pos(right - BROWSER_BTN_W, y + BROWSER_CARD_H - 26).width(BROWSER_BTN_W).build();
-                    action.active = !current;
-                    addRenderableWidget(action);
-                }
-                y += BROWSER_CARD_H + CARD_SPACING;
+            ExternalPlugin ext = row.installed();
+            int half = (width - 4) / 2;
+            ExternalPlugin.Status status = ext.getStatus();
+            if (status == ExternalPlugin.Status.NEEDS_APPROVAL) {
+                addRenderableWidget(Button.builder(Component.literal("Allow"), btn -> confirmLocalPlugin(ext)).pos(x, y).width(half).build());
+            } else if (status != ExternalPlugin.Status.REVOKED) {
+                boolean on = status == ExternalPlugin.Status.ENABLED;
+                addRenderableWidget(Button.builder(Component.literal(on ? "Disable" : "Enable"), btn -> {
+                    pm.setEnabled(ext, !on);
+                    populateWidgets();
+                }).pos(x, y).width(half).build());
             }
+            addRenderableWidget(Button.builder(Component.literal("Delete"), btn -> {
+                pm.uninstall(ext);
+                populateWidgets();
+            }).pos(x + half + 4, y).width(half).build());
         }
     }
 
-    private void addInstalledButtons(ExternalPlugin ext, int right, int y) {
-        PluginManager pm = PluginManager.getInstance();
-        int by = y + BROWSER_CARD_H - 26;
-        addRenderableWidget(Button.builder(Component.literal("Delete"), btn -> {
-            pm.uninstall(ext);
-            populateWidgets();
-        }).pos(right - BROWSER_BTN_W, by).width(BROWSER_BTN_W).build());
-        ExternalPlugin.Status status = ext.getStatus();
-        int second = right - 2 * BROWSER_BTN_W - 4;
-        if (status == ExternalPlugin.Status.NEEDS_APPROVAL) {
-            addRenderableWidget(Button.builder(Component.literal("Allow"), btn -> confirmLocalPlugin(ext)).pos(second, by).width(BROWSER_BTN_W).build());
-        } else if (status != ExternalPlugin.Status.REVOKED) {
-            boolean on = status == ExternalPlugin.Status.ENABLED;
-            addRenderableWidget(Button.builder(Component.literal(on ? "Disable" : "Enable"), btn -> {
-                pm.setEnabled(ext, !on);
-                populateWidgets();
-            }).pos(second, by).width(BROWSER_BTN_W).build());
-        }
+    /** @return true if a row of the plugin list was clicked */
+    private boolean clickBrowserRow(double mx, double my) {
+        int cx = contentX();
+        if (mx < cx || mx >= cx + browserListWidth(contentWidth()) || my < BROWSER_LIST_Y || my >= browserVisibleBottom()) return false;
+        int index = (int) ((my - BROWSER_LIST_Y + pluginScroll) / BROWSER_ROW_H);
+        List<BrowserRow> rows = browserRows();
+        if (index < 0 || index >= rows.size()) return false;
+        pluginSelected = rows.get(index).key();
+        populateWidgets();
+        return true;
     }
 
     private static String formatCount(long count) {
@@ -372,85 +413,114 @@ public class XrayConfigScreen extends Screen {
         return this.font.plainSubstrByWidth(text, Math.max(0, width - this.font.width("..."))) + "...";
     }
 
-    private void drawBrowserCard(GuiGraphicsExtractor gge, int cx, int cw, int y, String id, String name, String author,
-                                 String description, List<String> tags, String rightTop, String rightBottom) {
-        int x1 = cx + cw;
-        int y1 = y + BROWSER_CARD_H;
-        gge.fill(cx, y, x1, y1, CARD_BG);
-        gge.fill(cx, y, x1, y + 1, CARD_BORDER);
-        gge.fill(cx, y1 - 1, x1, y1, CARD_BORDER);
-        gge.fill(cx, y, cx + 1, y1, CARD_BORDER);
-        gge.fill(x1 - 1, y, x1, y1, CARD_BORDER);
-        int icon = 40;
-        int color = 0xFF000000 | java.awt.Color.HSBtoRGB((id.hashCode() & 0xFF) / 255f, 0.55f, 0.65f);
-        gge.fill(cx + 8, y + 8, cx + 8 + icon, y + 8 + icon, color);
-        String letter = name.isEmpty() ? "?" : name.substring(0, 1).toUpperCase();
-        gge.centeredText(this.font, letter, cx + 8 + icon / 2, y + 8 + icon / 2 - 4, TEXT_WHITE);
-        int textX = cx + 8 + icon + 10;
-        int textRight = x1 - 12;
-        int titleW = textRight - textX - this.font.width(rightTop);
-        int descriptionW = textRight - textX - this.font.width(rightBottom);
-        int textW = cw - icon - 26 - 2 * BROWSER_BTN_W;
-        String byline = " by " + author;
-        String title = fit(name, titleW);
-        gge.text(this.font, title, textX, y + 8, TEXT_WHITE);
-        gge.text(this.font, fit(byline, Math.max(0, titleW - this.font.width(title))), textX + this.font.width(title), y + 8, TEXT_GRAY);
-        gge.text(this.font, fit(description, descriptionW), textX, y + 22, TEXT_GRAY);
-        int tagX = textX;
-        for (String tag : tags) {
-            int w = this.font.width(tag) + 8;
-            if (tagX + w > textX + textW) break;
-            gge.fill(tagX, y + 36, tagX + w, y + 48, 0xFF2F3A34);
-            gge.text(this.font, tag, tagX + 4, y + 38, 0xFF7FD6A0);
-            tagX += w + 4;
+    private List<String> wrap(String text, int width) {
+        List<String> lines = new ArrayList<>();
+        StringBuilder line = new StringBuilder();
+        for (String word : text.split(" ")) {
+            String next = line.isEmpty() ? word : line + " " + word;
+            if (this.font.width(next) > width && !line.isEmpty()) {
+                lines.add(line.toString());
+                line = new StringBuilder(word);
+            } else {
+                line = new StringBuilder(next);
+            }
         }
-        gge.text(this.font, rightTop, x1 - 8 - this.font.width(rightTop), y + 8, 0xFF55DD88);
-        gge.text(this.font, rightBottom, x1 - 8 - this.font.width(rightBottom), y + 20, TEXT_GRAY);
+        if (!line.isEmpty()) lines.add(line.toString());
+        return lines;
+    }
+
+    private void drawPluginIcon(GuiGraphicsExtractor gge, String id, String name, int x, int y, int size) {
+        if (PluginIconRenderer.hasIcon(id)) {
+            PluginIconRenderer.render(gge, id, x, y, size);
+            return;
+        }
+        int color = 0xFF000000 | java.awt.Color.HSBtoRGB((id.hashCode() & 0xFF) / 255f, 0.55f, 0.65f);
+        gge.fill(x, y, x + size, y + size, color);
+        String letter = name.isEmpty() ? "?" : name.substring(0, 1).toUpperCase();
+        gge.centeredText(this.font, letter, x + size / 2, y + size / 2 - 4, TEXT_WHITE);
     }
 
     private void drawPluginBrowser(GuiGraphicsExtractor gge, int cx, int cw) {
         PluginManager pm = PluginManager.getInstance();
-        int y = BROWSER_LIST_Y - pluginScroll;
+        List<BrowserRow> rows = browserRows();
+        BrowserRow selected = selectedRow(rows);
         int bottom = browserVisibleBottom();
-        if (pluginShowInstalled) {
-            for (ExternalPlugin ext : installedEntries()) {
-                PluginDefinition d = ext.getDefinition();
-                if (browserRowVisible(y)) {
-                    drawBrowserCard(gge, cx, cw, y, d.id(), d.name(), d.author(), d.description(), d.categories(), statusLabel(ext.getStatus()), "v" + d.version());
-                }
-                y += BROWSER_CARD_H + CARD_SPACING;
+        int listW = browserListWidth(cw);
+        int listRight = cx + listW;
+        gge.fill(cx, BROWSER_LIST_Y, listRight, bottom, CARD_BG);
+        int y = BROWSER_LIST_Y - pluginScroll;
+        for (BrowserRow row : rows) {
+            if (y >= BROWSER_LIST_Y && y + BROWSER_ROW_H <= bottom) {
+                if (row == selected) gge.fill(cx, y, listRight, y + BROWSER_ROW_H, 0xFF2F3A34);
+                drawPluginIcon(gge, row.id(), row.name(), cx + 4, y + 3, BROWSER_ROW_H - 6);
+                int textX = cx + BROWSER_ROW_H + 2;
+                int textW = listRight - textX - 8;
+                gge.text(this.font, fit(row.name(), textW), textX, y + 4, TEXT_WHITE);
+                String sub = pluginShowInstalled ? row.status() : "\u2193 " + formatCount(pm.downloadsOf(row.id()));
+                gge.text(this.font, fit(sub, textW), textX, y + 14, pluginShowInstalled ? TEXT_GRAY : 0xFF55DD88);
             }
-            for (PluginManager.RejectedFile file : pm.getRejected()) {
-                if (browserRowVisible(y)) {
-                    drawBrowserCard(gge, cx, cw, y, "blocked", file.file().getFileName().toString(), "Unknown", file.reason(), List.of(), "Blocked", "");
-                }
-                y += BROWSER_CARD_H + CARD_SPACING;
-            }
-            if (browserRows() == 0) {
-                gge.text(this.font, "No plugins installed. Drag & drop a .lua file here to import one.", cx, BROWSER_LIST_Y + 6, TEXT_GRAY);
-            }
-        } else {
-            for (PluginDefinition d : browseEntries()) {
-                if (browserRowVisible(y)) {
-                    drawBrowserCard(gge, cx, cw, y, d.id(), d.name(), d.author(), d.description(), d.categories(),
-                        "\u2193 " + formatCount(pm.downloadsOf(d.id())), "v" + d.version());
-                }
-                y += BROWSER_CARD_H + CARD_SPACING;
-            }
-            String status = pluginStatus != null ? pluginStatus : pm.getRepositoryStatus();
-            if (browserRows() == 0) {
-                gge.text(this.font, !status.isEmpty() ? status : "No plugins found.", cx, BROWSER_LIST_Y + 6, TEXT_GRAY);
-            } else if (pluginStatus != null) {
-                gge.text(this.font, pluginStatus, cx, 16, 0xFFFF5555);
-            }
+            y += BROWSER_ROW_H;
         }
-        int content = browserRows() * (BROWSER_CARD_H + CARD_SPACING);
+        int content = rows.size() * BROWSER_ROW_H;
         int visible = bottom - BROWSER_LIST_Y;
         if (content > visible) {
-            int barH = Math.max(16, visible * visible / content);
+            int barH = Math.max(12, visible * visible / content);
             int barY = BROWSER_LIST_Y + (visible - barH) * pluginScroll / Math.max(1, content - visible);
-            gge.fill(cx + cw + 2, barY, cx + cw + 5, barY + barH, 0xFF777777);
+            gge.fill(listRight - 3, barY, listRight - 1, barY + barH, 0xFF777777);
         }
+
+        int left = listRight + 6;
+        int right = cx + cw;
+        gge.fill(left, BROWSER_LIST_Y, right, bottom, CARD_BG);
+        if (selected == null) {
+            String status = pluginStatus != null ? pluginStatus : pm.getRepositoryStatus();
+            String empty = pluginShowInstalled ? "No plugins installed. Drag & drop a .lua file here." : !status.isEmpty() ? status : "No plugins found.";
+            int ty = BROWSER_LIST_Y + 8;
+            for (String line : wrap(empty, right - left - 12)) {
+                gge.text(this.font, line, left + 6, ty, TEXT_GRAY);
+                ty += 11;
+            }
+            return;
+        }
+        int icon = 28;
+        int top = BROWSER_LIST_Y + 6;
+        drawPluginIcon(gge, selected.id(), selected.name(), left + 6, top, icon);
+        int headX = left + 6 + icon + 6;
+        int headW = right - headX - 6;
+        gge.text(this.font, fit(selected.name(), headW), headX, top, TEXT_WHITE);
+        gge.text(this.font, fit("by " + selected.author(), headW), headX, top + 10, TEXT_GRAY);
+        String stats = "v" + selected.version() + (pluginShowInstalled ? "" : "  \u2193 " + formatCount(pm.downloadsOf(selected.id())));
+        gge.text(this.font, fit(stats, headW), headX, top + 20, 0xFF55DD88);
+        int ty = top + icon + 6;
+        int textW = right - left - 12;
+        int limit = bottom - 30;
+        for (String line : wrap(selected.description(), textW)) {
+            if (ty + 9 > limit) return;
+            gge.text(this.font, line, left + 6, ty, TEXT_GRAY);
+            ty += 11;
+        }
+        if (!selected.categories().isEmpty() && ty + 16 <= limit) {
+            ty += 2;
+            int tagX = left + 6;
+            for (String tag : selected.categories()) {
+                int w = this.font.width(tag) + 8;
+                if (tagX + w > right - 6) break;
+                gge.fill(tagX, ty, tagX + w, ty + 12, 0xFF2F3A34);
+                gge.text(this.font, tag, tagX + 4, ty + 2, 0xFF7FD6A0);
+                tagX += w + 4;
+            }
+            ty += 15;
+        }
+        if (selected.rejected() == null && ty + 11 <= limit) {
+            gge.text(this.font, selected.permissions().isEmpty() ? "No permissions" : "Permissions:", left + 6, ty, COLUMN_HEADER);
+            ty += 11;
+            for (String permission : selected.permissions()) {
+                if (ty + 9 > limit) return;
+                gge.text(this.font, fit("- " + permission, textW), left + 6, ty, TEXT_GRAY);
+                ty += 11;
+            }
+        }
+        if (pluginStatus != null) gge.text(this.font, fit(pluginStatus, textW), left + 6, bottom - 40, 0xFFFF5555);
     }
 
     public void populateWidgets() {
@@ -598,6 +668,10 @@ public class XrayConfigScreen extends Screen {
             Component.literal(describePermissions(definition))));
     }
 
+    private void openPublishingGuide() {
+        net.minecraft.client.gui.screens.ConfirmLinkScreen.confirmLinkNow(this, PUBLISHING_GUIDE);
+    }
+
     private void openPluginsFolder() {
         try {
             Path pluginsFolder = PluginManager.getInstance().pluginsFolder();
@@ -699,6 +773,10 @@ public class XrayConfigScreen extends Screen {
             }
         }
 
+        if (selectedTab == 1 && clickBrowserRow(mx, my)) {
+            return true;
+        }
+
         LuaPlugin clickedPlugin = selectedPlugin();
         if (clickedPlugin != null && pluginBlocksCache != null && !pluginBlocksCache.isEmpty()) {
             int startX = contentX();
@@ -782,9 +860,7 @@ public class XrayConfigScreen extends Screen {
         }
     }
 
-    public void extractRenderState(GuiGraphicsExtractor gge) {
-        int mouseX = gge.mouseX();
-        int mouseY = gge.mouseY();
+    public void extractRenderState(GuiGraphicsExtractor gge, int mouseX, int mouseY, float delta) {
         int cx = contentX();
         int cw = contentWidth();
         int ch = cardHeight();
@@ -843,7 +919,7 @@ public class XrayConfigScreen extends Screen {
             }
         }
 
-        super.extractRenderState(gge);
+        super.extractRenderState(gge, mouseX, mouseY, delta);
     }
 
     private void startLogWatcher() {
@@ -974,7 +1050,7 @@ public class XrayConfigScreen extends Screen {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double deltaX, double deltaY) {
         if (selectedTab == 1 && mouseX >= contentX()) {
-            pluginScroll -= (int) (deltaY * 20);
+            pluginScroll -= (int) (deltaY * BROWSER_ROW_H);
             populateWidgets();
             return true;
         }

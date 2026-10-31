@@ -25,13 +25,13 @@ public abstract class MixinTitleScreen extends Screen {
     }
 
     @Inject(
-        method = "extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;)V",
+        method = "extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;IIF)V",
         at = @At("TAIL"),
         require = 1
     )
-    private void xtoxray$renderNews(GuiGraphicsExtractor graphics, CallbackInfo ci) {
+    private void xtoxray$renderNews(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick, CallbackInfo ci) {
         try {
-            NewsOverlay.render(this, graphics, graphics.mouseX(), graphics.mouseY());
+            NewsOverlay.render(this, graphics, mouseX, mouseY);
             ModBranding.render(this, graphics);
         } catch (Throwable t) {
             XtoXray.LOGGER.warn("News-Render fehlgeschlagen", t);
