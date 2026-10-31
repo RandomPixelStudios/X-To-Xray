@@ -49,6 +49,15 @@ public class XrayToggleHandler implements ClientModInitializer {
         if (client.player != null && client.level != null && client.getCurrentServer() != null) {
             hs.tick();
         }
+        if (client.player != null && client.level != null && client.getCurrentServer() != null
+            && !hs.isServerHasMod() && XrayState.getInstance().isActive()) {
+            // Xray may have been switched on in singleplayer; it must not stay on when joining a server.
+            XrayState.getInstance().toggle();
+            client.player.removeEffect(MobEffects.NIGHT_VISION);
+            rebuildAllSections(client);
+            ConfigManager.save();
+            PluginManager.getInstance().fire("xray_toggle", org.luaj.vm2.LuaValue.valueOf(false));
+        }
         while (TOGGLE_KEY.consumeClick()) {
             if (client.level == null || client.player == null) continue;
             if (client.getCurrentServer() != null && !hs.isServerHasMod()) {

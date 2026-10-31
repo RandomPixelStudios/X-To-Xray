@@ -789,7 +789,7 @@ public class XrayConfigScreen extends Screen {
         int cw = contentWidth();
         int ch = cardHeight();
 
-        gge.centeredText(this.font, this.title.getString(), this.width / 2, 8, TEXT_WHITE);
+        gge.centeredText(this.font, this.title.getString(), this.width / 2, 4, TEXT_WHITE);
 
         if (selectedTab == 0) {
             gge.text(this.font, "Xray Settings", cx, 30 - 14, TEXT_WHITE);
