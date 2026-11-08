@@ -15,16 +15,20 @@ public class PluginBrowserClientTest implements FabricClientGameTest {
     @Override
     public void runTest(ClientGameTestContext context) {
         System.setProperty("xtoxray.noDownloadCount", "true");
-        context.runOnClient(client -> ScreenSwitcher.open(new net.minecraft.client.gui.screens.TitleScreen()));
-        for (int i = 0; i < 300 && !context.computeOnClient(client -> com.xtoxray.client.news.NewsOverlay.debugState().startsWith("visible=true")
+        context.runOnClient(client -> {
+            client.options.guiScale().set(1);
+            client.resizeGui();
+            ScreenSwitcher.open(new net.minecraft.client.gui.screens.TitleScreen());
+        });
+        for (int i = 0; i < 300 && !context.computeOnClient(client -> com.xtoxray.client.news.NewsManager.getCurrentEntry() != null
             && com.xtoxray.client.news.NewsManager.getCurrentEntry().getImage().contains("news_remote")); i++) {
             context.waitTicks(2);
         }
+        context.takeScreenshot("0-news-title-screen");
         String news = context.computeOnClient(client -> com.xtoxray.client.news.NewsOverlay.debugState()
             + " image=" + com.xtoxray.client.news.NewsManager.getCurrentEntry().getImage());
         System.out.println("XTOXRAY-TEST news " + news);
         if (!news.startsWith("visible=true") || !news.contains("news_remote")) throw new AssertionError("News not shown: " + news);
-        context.takeScreenshot("0-news-title-screen");
         context.runOnClient(client -> com.xtoxray.client.news.NewsConsent.ask());
         context.waitTicks(10);
         context.takeScreenshot("0-news-consent");
