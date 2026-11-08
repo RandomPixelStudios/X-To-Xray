@@ -25,6 +25,7 @@ public final class NewsManager {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private static List<NewsEntry> entries = new ArrayList<>();
+    private static List<NewsEntry> remote = List.of();
     private static boolean initialized = false;
     private static long knownModified = -1;
     private static long lastCheck = 0;
@@ -35,6 +36,18 @@ public final class NewsManager {
     public static synchronized void init() {
         load(true);
         initialized = true;
+        NewsConsent.register();
+    }
+
+    /** News from GitHub replace the local ones. Runs on the render thread. */
+    static void setRemote(List<NewsEntry> downloaded) {
+        List<NewsEntry> registered = NewsDownloader.registerTextures(downloaded);
+        if (registered.isEmpty()) {
+            return;
+        }
+        synchronized (NewsManager.class) {
+            remote = registered;
+        }
     }
 
     public static Layout layoutFor(int screenWidth, int screenHeight) {
@@ -48,9 +61,12 @@ public final class NewsManager {
     }
 
     public static synchronized Frame frame() {
+        if (!NewsConsent.isEnabled()) {
+            return null;
+        }
         ensureLoaded();
         List<NewsEntry> imgs = new ArrayList<>();
-        for (NewsEntry entry : entries) {
+        for (NewsEntry entry : remote.isEmpty() ? entries : remote) {
             if (entry.hasImage()) {
                 imgs.add(entry);
             }
@@ -123,7 +139,7 @@ public final class NewsManager {
         }
     }
 
-    private static List<NewsEntry> parse(String json) {
+    static List<NewsEntry> parse(String json) {
         List<NewsEntry> out = new ArrayList<>();
         JsonElement root = GSON.fromJson(json, JsonElement.class);
         if (root == null || !root.isJsonArray()) {

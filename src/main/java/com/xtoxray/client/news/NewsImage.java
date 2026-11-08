@@ -14,6 +14,10 @@ final class NewsImage {
     private NewsImage() {
     }
 
+    static synchronized void put(String imagePath, float aspect) {
+        CACHE.put(imagePath, aspect);
+    }
+
     static synchronized float aspect(String imagePath) {
         Float cached = CACHE.get(imagePath);
         if (cached != null) {

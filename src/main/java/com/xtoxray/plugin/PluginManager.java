@@ -171,21 +171,61 @@ public final class PluginManager {
 
     private void stop(ExternalPlugin plugin) {
         LuaPlugin runtime = plugin.getRuntime();
-        if (runtime != null) runtime.saveSettings();
+        if (runtime != null) {
+            runtime.fire("shutdown");
+            if (runtime.usedControls()) host.releaseControls();
+            runtime.saveSettings();
+        }
         plugin.setRuntime(null);
     }
 
     /** Sends a game event to all running plugins. */
-    public void fire(String event, LuaValue... args) {
-        for (ExternalPlugin plugin : plugins) {
+    public boolean fire(String event, LuaValue... args) {
+        boolean allowed = true;
+        for (ExternalPlugin plugin : List.copyOf(plugins)) {
             LuaPlugin runtime = plugin.getRuntime();
             if (runtime == null) continue;
-            runtime.fire(event, args);
-            if (runtime.isStopped()) {
-                stop(plugin);
-                plugin.setStatus(ExternalPlugin.Status.CRASHED);
-            }
+            if (!runtime.fire(event, args)) allowed = false;
+            checkStopped(plugin, runtime);
         }
+        return allowed;
+    }
+
+    private void checkStopped(ExternalPlugin plugin, LuaPlugin runtime) {
+        if (runtime.isStopped()) {
+            stop(plugin);
+            plugin.setStatus(ExternalPlugin.Status.CRASHED);
+        }
+    }
+
+    /** Called while the HUD is drawn; graphics access goes through the host. */
+    public MinecraftHost hudHost() {
+        return host;
+    }
+
+    public boolean isHudPartHidden(String part) {
+        for (ExternalPlugin plugin : plugins) {
+            LuaPlugin runtime = plugin.getRuntime();
+            if (runtime != null && runtime.hiddenHud().contains(part)) return true;
+        }
+        return false;
+    }
+
+    /** Handles "/xtx [name] [arguments]". */
+    public void runCommand(String line) {
+        String[] parts = line.trim().split("\\s+", 2);
+        String name = parts[0];
+        String arguments = parts.length > 1 ? parts[1] : "";
+        boolean found = false;
+        Set<String> names = new java.util.TreeSet<>();
+        for (ExternalPlugin plugin : List.copyOf(plugins)) {
+            LuaPlugin runtime = plugin.getRuntime();
+            if (runtime == null) continue;
+            names.addAll(runtime.commandNames());
+            if (!name.isEmpty() && runtime.runCommand(name, arguments)) found = true;
+            checkStopped(plugin, runtime);
+        }
+        if (!found) host.chat(names.isEmpty() ? "No plugin commands available" : "Plugin commands: " + String.join(", ", names));
     }
 
     public void fireRender() {

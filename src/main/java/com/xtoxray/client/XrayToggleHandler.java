@@ -32,6 +32,7 @@ public class XrayToggleHandler implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(XrayToggleHandler::onTick);
         net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents.BEFORE_GIZMOS.register(context -> PluginManager.getInstance().fireRender());
         PluginManager.getInstance().init();
+        PluginEvents.register();
         NewsManager.init();
         HandshakeNetworking.registerClient();
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
@@ -64,19 +65,7 @@ public class XrayToggleHandler implements ClientModInitializer {
                 client.player.sendSystemMessage(Component.literal("The X To Xray Serverside Is Not Installed!").withStyle(net.minecraft.ChatFormatting.RED));
                 continue;
             }
-            XrayState state = XrayState.getInstance();
-            state.toggle();
-            if (state.isActive()) {
-                if (state.isNightVision()) {
-                    client.player.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, -1, 0, false, false, false));
-                }
-                lastRebuildPos = SectionPos.of(client.player.blockPosition());
-            } else {
-                client.player.removeEffect(MobEffects.NIGHT_VISION);
-            }
-            rebuildAllSections(client);
-            ConfigManager.save();
-            PluginManager.getInstance().fire("xray_toggle", org.luaj.vm2.LuaValue.valueOf(state.isActive()));
+            toggleXray(client);
         }
         if (client.player != null && client.level != null) {
             XrayState state = XrayState.getInstance();
@@ -101,6 +90,22 @@ public class XrayToggleHandler implements ClientModInitializer {
                 }
             }
         }
+    }
+
+    public static void toggleXray(Minecraft client) {
+        XrayState state = XrayState.getInstance();
+        state.toggle();
+        if (state.isActive()) {
+            if (state.isNightVision()) {
+                client.player.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, -1, 0, false, false, false));
+            }
+            lastRebuildPos = SectionPos.of(client.player.blockPosition());
+        } else {
+            client.player.removeEffect(MobEffects.NIGHT_VISION);
+        }
+        rebuildAllSections(client);
+        ConfigManager.save();
+        PluginManager.getInstance().fire("xray_toggle", org.luaj.vm2.LuaValue.valueOf(state.isActive()));
     }
 
     public static void rebuildAllSections(Minecraft client) {

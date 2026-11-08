@@ -640,12 +640,12 @@ public class XrayConfigScreen extends Screen {
     }
 
     private static String describePermissions(PluginDefinition definition) {
-        if (definition.permissions().isEmpty()) return "Permissions: none";
+        if (definition.permissions().isEmpty()) return "Permissions: none\nPlugins are used at your own risk.";
         StringBuilder text = new StringBuilder("This plugin can:");
         for (PluginPermission permission : definition.permissions()) {
             text.append("\n- ").append(permission.description());
         }
-        return text.toString();
+        return text.append("\nPlugins are used at your own risk.").toString();
     }
 
     private void confirmLocalPlugin(ExternalPlugin ext) {
@@ -860,7 +860,32 @@ public class XrayConfigScreen extends Screen {
         }
     }
 
+    /** Render entry point from Minecraft 26.4 on. Overrides at runtime only, so there is no @Override. */
+    public void extractRenderState(GuiGraphicsExtractor gge) {
+        extractContents(gge, GuiCompat.mouseX(), GuiCompat.mouseY(), GuiCompat.partialTick());
+        try {
+            if (superRender == null) superRender = GuiCompat.superRender(java.lang.invoke.MethodHandles.lookup(), XrayConfigScreen.class);
+            superRender.invoke(this, gge);
+        } catch (Throwable t) {
+            XtoXray.LOGGER.warn("Screen render failed", t);
+        }
+    }
+
+    private static java.lang.invoke.MethodHandle superRender;
+    private static java.lang.invoke.MethodHandle superRenderOld;
+
+    /** Render entry point before Minecraft 26.4. */
     public void extractRenderState(GuiGraphicsExtractor gge, int mouseX, int mouseY, float delta) {
+        extractContents(gge, mouseX, mouseY, delta);
+        try {
+            if (superRenderOld == null) superRenderOld = GuiCompat.superRenderOld(java.lang.invoke.MethodHandles.lookup(), XrayConfigScreen.class);
+            superRenderOld.invoke(this, gge, mouseX, mouseY, delta);
+        } catch (Throwable t) {
+            XtoXray.LOGGER.warn("Screen render failed", t);
+        }
+    }
+
+    private void extractContents(GuiGraphicsExtractor gge, int mouseX, int mouseY, float delta) {
         int cx = contentX();
         int cw = contentWidth();
         int ch = cardHeight();
@@ -918,8 +943,6 @@ public class XrayConfigScreen extends Screen {
                 gge.text(this.font, bugReportStatus, cx, logStartY + logHeight + 4, bugReportStatusColor);
             }
         }
-
-        super.extractRenderState(gge, mouseX, mouseY, delta);
     }
 
     private void startLogWatcher() {

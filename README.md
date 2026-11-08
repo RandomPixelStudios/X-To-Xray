@@ -15,3 +15,7 @@ X To Xray Is An Powerfull Minecraft Mod That Allows Players To Gather Recources 
 We (Random Pixel Studios) Are Updating The Mod Regulary!
 
 Tutorials And Trailers Can Be Found Here: https://www.youtube.com/@RandomPixelStudios
+
+### Plugins
+
+**Disclaimer:** Plugins are created by third parties and are used at your own risk. Random Pixel Studios does not guarantee that any plugin is safe, correct or free of errors, even after review. To the extent permitted by law, Random Pixel Studios is not responsible for damage caused by plugins, including lost worlds, lost data or problems with your computer.

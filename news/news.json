@@ -1,0 +1,16 @@
+[
+  {
+    "title": "X To Xray Update",
+    "lines": ["Version 2026.30 ist da!", "Druecke X im Spiel."],
+    "color": 5635925,
+    "url": "https://modrinth.com/mod/x-to-xray",
+    "image": "1.png"
+  },
+  {
+    "title": "YouTube",
+    "lines": ["Subscribe!", "Neue Videos & Tutorials."],
+    "color": 16733525,
+    "url": "https://www.youtube.com/@RandomPixelStudios",
+    "image": "2.png"
+  }
+]

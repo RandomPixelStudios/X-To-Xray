@@ -98,6 +98,28 @@ class LuaPluginTest {
     }
 
     @Test
+    void miningStatsCountsOresReportsAndPersists(@TempDir Path dir) throws Exception {
+        List<String> chat = new ArrayList<>();
+        FakeHost host = new FakeHost() {
+            @Override public void chat(String m) { chat.add(m); }
+        };
+        LuaPlugin first = load(resource("mining-stats.lua"), host, dir);
+        first.setValue("report_every", 10);
+        LuaValue zero = LuaValue.valueOf(0);
+        for (int i = 0; i < 7; i++) first.fire("block_mined", LuaValue.valueOf("minecraft:deepslate_diamond_ore"), zero, zero, zero);
+        first.fire("block_mined", LuaValue.valueOf("minecraft:stone"), zero, zero, zero);
+        for (int i = 0; i < 3; i++) first.fire("block_mined", LuaValue.valueOf("minecraft:ancient_debris"), zero, zero, zero);
+        assertFalse(first.isStopped());
+        assertEquals(List.of("Mining Stats: 10 this session, 10 all time", "1. deepslate diamond ore: 7", "2. ancient debris: 3"), chat);
+        LuaPlugin second = load(resource("mining-stats.lua"), host, dir);
+        chat.clear();
+        second.setValue("report_every", 1);
+        second.fire("block_mined", LuaValue.valueOf("minecraft:iron_ore"), zero, zero, zero);
+        assertEquals("Mining Stats: 1 this session, 11 all time", chat.get(0));
+        assertFalse(second.isStopped());
+    }
+
+    @Test
     void permissionsAreEnforced(@TempDir Path dir) throws Exception {
         FakeHost host = new FakeHost();
         String body = "xtx.on('tick', function() xtx.world.mine({{x=1,y=1,z=1}}) end)";
@@ -172,5 +194,44 @@ class LuaPluginTest {
         signer.initSign(pair.getPrivate());
         signer.update(data);
         return Base64.getEncoder().encode(signer.sign());
+    }
+
+    @Test
+    void newApiRespectsPermissionsAndTimersRun(@TempDir Path dir) throws Exception {
+        List<String> texts = new ArrayList<>();
+        FakeHost host = new FakeHost() {
+            @Override public void hudText(String text, int x, int y, int color, boolean shadow) { texts.add(text); }
+        };
+        LuaPlugin plugin = load(script("\"hud\"", """
+            local ok = pcall(function() return xtx.player.info() end)
+            assert(not ok, "player needs a permission")
+            assert(xtx.input == nil and xtx.options == nil and xtx.sound == nil)
+            assert(xtx.json.decode(xtx.json.encode({a = 1})).a == 1)
+            local ticks = 0
+            xtx.every(2, function() ticks = ticks + 1 end)
+            xtx.hud.hide("hotbar")
+            xtx.command("hello", function(args) xtx.hud.text(args, 0, 0) end)
+            xtx.on("hud", function() xtx.hud.text("ticks " .. ticks, 0, 0) end)
+            """), host, dir);
+        for (int i = 0; i < 4; i++) plugin.fire("tick");
+        plugin.fire("hud");
+        assertEquals(List.of("ticks 2"), texts);
+        assertTrue(plugin.hiddenHud().contains("hotbar"));
+        assertTrue(plugin.runCommand("hello", "world"));
+        assertEquals("world", texts.get(1));
+    }
+
+    @Test
+    void miningStatsCountsAndSavesOnShutdown(@TempDir Path dir) throws Exception {
+        List<String> chat = new ArrayList<>();
+        FakeHost host = new FakeHost() {
+            @Override public void chat(String m) { chat.add(m); }
+        };
+        LuaPlugin plugin = load(resource("mining-stats.lua"), host, dir);
+        plugin.fire("block_mined", LuaValue.valueOf("minecraft:diamond_ore"), LuaValue.valueOf(0), LuaValue.valueOf(0), LuaValue.valueOf(0));
+        plugin.fire("shutdown");
+        assertTrue(Files.readString(dir.resolve("stats.txt")).contains("minecraft:diamond_ore=1"));
+        plugin.runCommand("stats", "");
+        assertTrue(chat.stream().anyMatch(m -> m.contains("diamond ore: 1")), chat.toString());
     }
 }

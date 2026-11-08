@@ -25,9 +25,19 @@ public abstract class MixinTitleScreen extends Screen {
     }
 
     @Inject(
+        method = "extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;)V",
+        at = @At("TAIL"),
+        require = 0
+    )
+    private void xtoxray$renderNews(GuiGraphicsExtractor graphics, CallbackInfo ci) {
+        xtoxray$renderNews(graphics, com.xtoxray.client.gui.GuiCompat.mouseX(), com.xtoxray.client.gui.GuiCompat.mouseY(), 0, ci);
+    }
+
+    // Before 26.4. Exactly one of the two methods exists, so neither can be required.
+    @Inject(
         method = "extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;IIF)V",
         at = @At("TAIL"),
-        require = 1
+        require = 0
     )
     private void xtoxray$renderNews(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick, CallbackInfo ci) {
         try {

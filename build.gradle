@@ -97,6 +97,10 @@ publishing {
     }
 }
 
+tasks.named("runClientGameTest") {
+    jvmArgs "-Dxtoxray.testPlugins=${file("src/test/resources/plugins")}", "-Dxtoxray.news=true", "-Dxtoxray.newsBaseUrl=${project.findProperty("newsBaseUrl") ?: "https://raw.githubusercontent.com/RandomPixelStudios/X-To-Xray/main/news/"}"
+}
+
 // Optional: start the client test with a prepared plugin list: -PxtoxrayTestCache=<folder>
 tasks.named("runClientGameTest") {
     doFirst {

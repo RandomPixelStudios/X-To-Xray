@@ -7,7 +7,14 @@ public enum PluginPermission {
     ENTITIES_READ("entities.read", "See nearby players and mobs"),
     RENDER("render", "Draw boxes in the world"),
     XRAY("xray", "See and change the Xray whitelist"),
-    CHAT("chat", "Show messages in your chat");
+    CHAT("chat", "Show messages in your chat and on screen"),
+    CHAT_READ("chat.read", "Read and hide incoming chat messages"),
+    HUD("hud", "Draw on your HUD and hide parts of it"),
+    PLAYER_READ("player.read", "See your health, inventory and stats"),
+    PLAYER_CONTROL("player.control", "Move your character and change your hotbar slot"),
+    INPUT("input", "Notice keys you press while no menu is open"),
+    SOUND("sound", "Play sounds"),
+    OPTIONS("options", "Change game options like FOV and brightness");
 
     private final String key;
     private final String description;
